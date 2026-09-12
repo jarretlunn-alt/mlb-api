@@ -9,6 +9,11 @@ EXPECTED_COUNTS = {
     "fact_team_game": 2,
     "fact_player_game_batting": 2,
     "fact_player_game_pitching": 2,
+    # Analytics-layer tables are not populated by ingest
+    "fact_pitcher_log": 0,
+    "fact_team_rolling": 0,
+    "dim_park": 0,
+    "fact_prediction": 0,
 }
 
 

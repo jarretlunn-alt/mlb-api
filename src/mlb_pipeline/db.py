@@ -16,6 +16,11 @@ TABLES = [
     "fact_team_game",
     "fact_player_game_batting",
     "fact_player_game_pitching",
+    # Analytics layer (Task 01a)
+    "fact_pitcher_log",
+    "fact_team_rolling",
+    "dim_park",
+    "fact_prediction",
 ]
 
 

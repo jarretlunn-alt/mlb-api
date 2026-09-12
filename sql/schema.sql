@@ -80,3 +80,62 @@ CREATE TABLE IF NOT EXISTS fact_player_game_pitching (
     pitches          INTEGER,
     PRIMARY KEY (game_pk, player_id)
 );
+
+-- ---------------------------------------------------------------------------
+-- Analytics layer (Task 01a). Additive only: the tables above are unchanged.
+-- ---------------------------------------------------------------------------
+
+-- One row per pitcher appearance, derived from fact_player_game_pitching.
+-- is_starter / rest_days are computed by features.refresh_pitcher_log().
+CREATE TABLE IF NOT EXISTS fact_pitcher_log (
+    game_pk          BIGINT,
+    player_id        INTEGER,
+    team_id          INTEGER,
+    is_starter       BOOLEAN,
+    official_date    DATE,
+    rest_days        INTEGER,   -- days since last appearance
+    outs             INTEGER,
+    hits             INTEGER,
+    runs             INTEGER,
+    earned_runs      INTEGER,
+    walks            INTEGER,
+    strikeouts       INTEGER,
+    home_runs        INTEGER,
+    pitches          INTEGER,
+    PRIMARY KEY (game_pk, player_id)
+);
+
+-- Materialized rolling team stats as of a date (games strictly before as_of_date).
+CREATE TABLE IF NOT EXISTS fact_team_rolling (
+    team_id        INTEGER,
+    as_of_date     DATE,
+    window_days    INTEGER,   -- 7, 15, or 30
+    runs_scored    DOUBLE,    -- per game average
+    runs_allowed   DOUBLE,
+    ops_vs_rhp     DOUBLE,
+    ops_vs_lhp     DOUBLE,
+    fip            DOUBLE,    -- team bullpen FIP
+    PRIMARY KEY (team_id, as_of_date, window_days)
+);
+
+-- Static park factors, seeded by features.seed_park_factors().
+CREATE TABLE IF NOT EXISTS dim_park (
+    park_id        INTEGER PRIMARY KEY,
+    name           VARCHAR,
+    team_id        INTEGER,
+    run_factor     DOUBLE,   -- 1.0 = neutral; >1.0 = hitter-friendly
+    hr_factor      DOUBLE,
+    handedness     VARCHAR   -- 'neutral', 'rhb', 'lhb'
+);
+
+-- Model outputs, one row per (model, game).
+CREATE TABLE IF NOT EXISTS fact_prediction (
+    prediction_id  VARCHAR PRIMARY KEY,  -- "{model_name}_{game_pk}"
+    game_pk        BIGINT,
+    model_name     VARCHAR,
+    predicted_at   TIMESTAMP,
+    home_win_prob  DOUBLE,
+    away_win_prob  DOUBLE,
+    pred_total     DOUBLE,
+    features_json  JSON
+);
