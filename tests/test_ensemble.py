@@ -27,8 +27,11 @@ def warehouse(monkeypatch):
                              "away_runs_allowed_per_game": 3 + (pk % 2),
                              "park_run_factor": 1.02, "is_dome": True,
                              "home_score": 99, "home_win": True}))
-    monkeypatch.setattr(ensemble, "_elo", None)
-    monkeypatch.setattr(ensemble, "_poisson", None)
+    monkeypatch.setattr(ensemble, "_elo", SimpleNamespace(build_ratings_from_history=
+        lambda con, day: {}))
+    monkeypatch.setattr(ensemble, "_poisson", SimpleNamespace(predict=lambda *a:
+        ensemble.GamePrediction(a[1], "poisson", 0.5, 0.5, 9.0,
+                                {"lam_home": 4.5, "lam_away": 4.5})))
     yield con, seasons
     con.close()
 
@@ -115,18 +118,8 @@ def test_main_runs_three_comparisons(warehouse, monkeypatch, tmp_path, capsys):
         target.executemany("INSERT INTO fact_game VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                            con.execute("SELECT * FROM fact_game").fetchall())
     monkeypatch.chdir(tmp_path)
-    # Force fallback even when the prerequisite backtest module has merged.
-    monkeypatch.setattr(ensemble, "_optional", lambda name: None)
     ensemble.main()
     output = capsys.readouterr().out
     for name in ("ensemble", "elo", "poisson"):
         assert f"{name}: test season {seasons[-1]}" in output
     assert output.count("ROI simulation") == 3
-
-
-def test_absent_modules_support_neutral_pipeline(warehouse, monkeypatch):
-    con, seasons = warehouse
-    monkeypatch.setattr(ensemble, "_features", None)
-    model = ensemble.train(con, seasons)
-    pred = ensemble.predict(model, con, 1, 1, 2, f"{seasons[0]}-06-02")
-    assert 0 <= pred.home_win_prob <= 1

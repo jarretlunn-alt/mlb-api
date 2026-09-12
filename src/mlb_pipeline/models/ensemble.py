@@ -1,52 +1,23 @@
 """Calibrated XGBoost with pregame Elo, Poisson, and engineered inputs.
 
-Temporary neutral fallbacks support the independently dispatched prerequisite
-branches. Missing modules are reported explicitly; errors inside installed
-modules are never swallowed. No network access or warehouse writes occur.
+No network access or warehouse writes occur.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date, timedelta
 from functools import partial
-from importlib import import_module
 from pathlib import Path
-from types import SimpleNamespace
-import warnings
 
 import numpy as np
 import xgboost as xgb
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.frozen import FrozenEstimator
-from sklearn.metrics import brier_score_loss, log_loss
 
-
-def _optional(name):
-    try:
-        return import_module(name)
-    except ModuleNotFoundError as exc:
-        if exc.name != name:
-            raise
-        warnings.warn(f"{name} unavailable; using neutral ensemble fallback", RuntimeWarning)
-        return None
-
-
-_prediction = _optional("mlb_pipeline.predict")
-if _prediction is not None:
-    GamePrediction = _prediction.GamePrediction
-else:
-    @dataclass
-    class GamePrediction:
-        game_pk: int
-        model_name: str
-        home_win_prob: float
-        away_win_prob: float
-        pred_total: float | None
-        features: dict
-
-_features = _optional("mlb_pipeline.features")
-_elo = _optional("mlb_pipeline.models.elo")
-_poisson = _optional("mlb_pipeline.models.poisson")
+from mlb_pipeline import features as _features
+from mlb_pipeline.backtest import run_backtest
+from mlb_pipeline.models import elo as _elo
+from mlb_pipeline.models import poisson as _poisson
+from mlb_pipeline.predict import GamePrediction
 
 FEATURE_NAMES = (
     "elo_home_rating", "elo_away_rating", "poisson_lambda_home",
@@ -89,21 +60,15 @@ def _games(con, seasons):
 
 def _ratings(con, as_of_date):
     cutoff = date.fromisoformat(str(as_of_date)) - timedelta(days=1)
-    return _elo.build_ratings_from_history(con, cutoff.isoformat()) if _elo else {}
+    return _elo.build_ratings_from_history(con, cutoff.isoformat())
 
 
 def _poisson_prediction(con, game_pk, home_id, away_id, as_of_date):
-    if _poisson:
-        return _poisson.predict(con, game_pk, home_id, away_id, as_of_date)
-    return GamePrediction(game_pk, "poisson", 0.5, 0.5, 9.0,
-                          {"lam_home": 4.5, "lam_away": 4.5, "fallback": True})
+    return _poisson.predict(con, game_pk, home_id, away_id, as_of_date)
 
 
 def _feature_row(con, game_pk, home_id, away_id, as_of_date, ratings=None):
-    raw = (_features.build_game_feature_row(con, game_pk, as_of_date)
-           if _features else {"home_runs_per_game": 0.0,
-                              "away_runs_allowed_per_game": 0.0,
-                              "park_run_factor": 1.0, "is_dome": 0.0})
+    raw = _features.build_game_feature_row(con, game_pk, as_of_date)
     if raw is None:
         return None
     ratings = _ratings(con, as_of_date) if ratings is None else ratings
@@ -192,34 +157,8 @@ def feature_importances(model: CalibratedClassifierCV) -> dict[str, float]:
 
 def _elo_prediction(con, game_pk, home_id, away_id, as_of_date):
     ratings = _ratings(con, as_of_date)
-    home = (_elo.predict(ratings, home_id, away_id)["home_win_prob"] if _elo else 0.5)
+    home = _elo.predict(ratings, home_id, away_id)["home_win_prob"]
     return GamePrediction(game_pk, "elo", home, 1.0 - home, None, {})
-
-
-def _fallback_backtest(con, predict_fn, train_seasons, test_season):
-    """Temporary synthetic-market scorer used only until Task 02c is merged."""
-    probabilities, outcomes = [], []
-    for pk, day, home, away, won in _games(con, [test_season]):
-        probabilities.append(predict_fn(con, pk, home, away, day.isoformat()).home_win_prob)
-        outcomes.append(won)
-    if not outcomes:
-        raise ValueError("No decided final games in the test season.")
-    p, y = np.asarray(probabilities), np.asarray(outcomes)
-    calibration = {}
-    for i in range(10):
-        mask = np.minimum((p * 10).astype(int), 9) == i
-        calibration[f"{i / 10:.2f}-{(i + 1) / 10:.2f}"] = {
-            "n": int(mask.sum()), "predicted_prob": float(p[mask].mean()) if mask.any() else None,
-            "actual_win_rate": float(y[mask].mean()) if mask.any() else None}
-    # Fixed synthetic 50/50 market with proportional 4.5% vig.
-    side_prob = np.maximum(p, 1 - p)
-    bets = side_prob > 0.5 * 1.045 + 0.03
-    payoff = np.where((p >= 0.5) == y, 1 / (0.5 * 1.045) - 1, -1)
-    stakes = np.maximum(0, (side_prob - 0.5 * 1.045) / (1 - 0.5 * 1.045)) * 0.25
-    return SimpleNamespace(brier_score=float(brier_score_loss(y, p)),
-                           log_loss=float(log_loss(y, p, labels=[0, 1])), calibration=calibration,
-                           roi_flat_bet=float(payoff[bets].mean()) if bets.any() else 0.0,
-                           roi_kelly=float(np.average(payoff[bets], weights=stakes[bets])) if bets.any() else 0.0)
 
 
 def main():
@@ -236,11 +175,9 @@ def main():
             print(SEASON_ERROR)
             return
         model = train(con, seasons[:-1])
-        backtest = _optional("mlb_pipeline.backtest")
-        run = backtest.run_backtest if backtest else _fallback_backtest
         for name, callback in (("ensemble", partial(predict, model)),
                                ("elo", _elo_prediction), ("poisson", _poisson_prediction)):
-            result = run(con, callback, seasons[:-1], seasons[-1])
+            result = run_backtest(con, callback, seasons[:-1], seasons[-1])
             print(f"{name}: test season {seasons[-1]}, Brier={result.brier_score:.6f}, log-loss={result.log_loss:.6f}")
             print("Calibration table:", result.calibration)
             print(f"ROI simulation (synthetic market): flat={result.roi_flat_bet:.4%}, quarter-Kelly={result.roi_kelly:.4%}")

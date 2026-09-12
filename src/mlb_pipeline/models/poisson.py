@@ -29,27 +29,8 @@ import math
 
 from scipy.stats import poisson as scipy_poisson
 
-try:  # Owned by Task 02a; may not be merged yet when this module lands.
-    from mlb_pipeline.predict import GamePrediction
-except ImportError:  # pragma: no cover - exercised only before 02a merges
-    from dataclasses import dataclass
-
-    @dataclass
-    class GamePrediction:  # type: ignore[no-redef]
-        """Minimal stand-in matching the Task 02a unified interface."""
-
-        game_pk: int
-        model_name: str
-        home_win_prob: float
-        away_win_prob: float
-        pred_total: float | None
-        features: dict
-
-
-try:  # Owned by Task 01a; may not be merged yet when this module lands.
-    from mlb_pipeline import features as _features
-except ImportError:  # pragma: no cover - exercised only before 01a merges
-    _features = None
+from mlb_pipeline import features as _features
+from mlb_pipeline.predict import GamePrediction
 
 MODEL_NAME = "poisson"
 
@@ -177,23 +158,22 @@ def _team_rates(con, team_id: int, as_of_date: str, league_avg: float) -> dict:
     MIN_GAMES games and non-null rates. Returns a dict with runs_per_game,
     runs_allowed_per_game, games, window, and a `fallback` flag.
     """
-    if _features is not None:
-        for window in FALLBACK_WINDOWS:
-            feats = _features.team_rolling_features(con, team_id, as_of_date, window)
-            if not feats:
-                continue
-            rpg = feats.get("runs_per_game")
-            rapg = feats.get("runs_allowed_per_game")
-            games = int(feats.get("games") or 0)
-            if rpg is None or rapg is None or games < MIN_GAMES:
-                continue
-            return {
-                "runs_per_game": float(rpg),
-                "runs_allowed_per_game": float(rapg),
-                "games": games,
-                "window": window,
-                "fallback": False,
-            }
+    for window in FALLBACK_WINDOWS:
+        feats = _features.team_rolling_features(con, team_id, as_of_date, window)
+        if not feats:
+            continue
+        rpg = feats.get("runs_per_game")
+        rapg = feats.get("runs_allowed_per_game")
+        games = int(feats.get("games") or 0)
+        if rpg is None or rapg is None or games < MIN_GAMES:
+            continue
+        return {
+            "runs_per_game": float(rpg),
+            "runs_allowed_per_game": float(rapg),
+            "games": games,
+            "window": window,
+            "fallback": False,
+        }
     return {
         "runs_per_game": league_avg,
         "runs_allowed_per_game": league_avg,
@@ -205,8 +185,6 @@ def _team_rates(con, team_id: int, as_of_date: str, league_avg: float) -> dict:
 
 def _park_run_factor(con, game_pk: int) -> float:
     """Home park run factor for a game; neutral (1.0) if unknown."""
-    if _features is None:
-        return 1.0
     context = _features.game_context_features(con, game_pk)
     if not context:
         return 1.0
