@@ -7,19 +7,19 @@ import numpy as np
 import pytest
 from sklearn.calibration import CalibratedClassifierCV
 
+from mlb_pipeline import db
 from mlb_pipeline.models import ensemble
 
 
 @pytest.fixture
 def warehouse(monkeypatch):
     con = duckdb.connect(":memory:")
-    con.execute("""CREATE TABLE fact_game (
-        game_pk BIGINT, official_date DATE, season INTEGER, status VARCHAR,
-        home_team_id INTEGER, away_team_id INTEGER, home_score INTEGER, away_score INTEGER)
-    """)
+    db.init_schema(con)
     seasons = [date.today().year - 3, date.today().year - 2]
     for j, season in enumerate(seasons):
-        con.executemany("INSERT INTO fact_game VALUES (?, ?, ?, 'Final', 1, 2, ?, ?)", [
+        con.executemany("""INSERT INTO fact_game
+            (game_pk, official_date, season, status, home_team_id, away_team_id, home_score, away_score)
+            VALUES (?, ?, ?, 'Final', 1, 2, ?, ?)""", [
             (j * 25 + i, date(season, 6, 1) + timedelta(days=i), season,
              5 if i % 2 else 2, 3) for i in range(25)])
     monkeypatch.setattr(ensemble, "_features", SimpleNamespace(build_game_feature_row=
@@ -27,8 +27,9 @@ def warehouse(monkeypatch):
                              "away_runs_allowed_per_game": 3 + (pk % 2),
                              "park_run_factor": 1.02, "is_dome": True,
                              "home_score": 99, "home_win": True}))
-    monkeypatch.setattr(ensemble, "_elo", SimpleNamespace(build_ratings_from_history=
-        lambda con, day: {}))
+    monkeypatch.setattr(ensemble, "_elo", SimpleNamespace(
+        build_ratings_from_history=lambda con, day: {},
+        predict=lambda ratings, home_id, away_id: {"home_win_prob": 0.5, "away_win_prob": 0.5}))
     monkeypatch.setattr(ensemble, "_poisson", SimpleNamespace(predict=lambda *a:
         ensemble.GamePrediction(a[1], "poisson", 0.5, 0.5, 9.0,
                                 {"lam_home": 4.5, "lam_away": 4.5})))
@@ -114,9 +115,12 @@ def test_main_runs_three_comparisons(warehouse, monkeypatch, tmp_path, capsys):
     data = tmp_path / "data"
     data.mkdir()
     with duckdb.connect(str(data / "warehouse.duckdb")) as target:
-        target.execute("CREATE TABLE fact_game (game_pk BIGINT, official_date DATE, season INTEGER, status VARCHAR, home_team_id INTEGER, away_team_id INTEGER, home_score INTEGER, away_score INTEGER)")
-        target.executemany("INSERT INTO fact_game VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                           con.execute("SELECT * FROM fact_game").fetchall())
+        db.init_schema(target)
+        cursor = con.execute("SELECT * FROM fact_game")
+        columns = [d[0] for d in cursor.description]
+        placeholders = ", ".join(["?"] * len(columns))
+        target.executemany(f"INSERT INTO fact_game ({', '.join(columns)}) VALUES ({placeholders})",
+                           cursor.fetchall())
     monkeypatch.chdir(tmp_path)
     ensemble.main()
     output = capsys.readouterr().out
