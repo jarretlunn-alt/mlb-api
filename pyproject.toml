@@ -7,6 +7,8 @@ dependencies = [
     "duckdb>=0.10",
     "requests>=2.31",
     "scipy>=1.12",
+    "xgboost>=2.0",
+    "scikit-learn>=1.6",
 ]
 
 [project.optional-dependencies]
