@@ -1,0 +1,73 @@
+{
+  "gamePk": 700001,
+  "gameData": {
+    "game": { "pk": 700001, "type": "R", "season": "2026" },
+    "datetime": { "officialDate": "2026-07-01", "dateTime": "2026-07-02T02:10:00Z" },
+    "status": {
+      "abstractGameState": "Final",
+      "codedGameState": "F",
+      "detailedState": "Final",
+      "statusCode": "F"
+    },
+    "teams": {
+      "away": {
+        "id": 133,
+        "name": "Athletics",
+        "abbreviation": "ATH",
+        "teamCode": "ath",
+        "league": { "id": 103, "name": "American League" },
+        "division": { "id": 200, "name": "American League West" },
+        "venue": { "id": 2529, "name": "Sutter Health Park" }
+      },
+      "home": {
+        "id": 136,
+        "name": "Seattle Mariners",
+        "abbreviation": "SEA",
+        "teamCode": "sea",
+        "league": { "id": 103, "name": "American League" },
+        "division": { "id": 200, "name": "American League West" },
+        "venue": { "id": 680, "name": "T-Mobile Park" }
+      }
+    },
+    "players": {
+      "ID660001": {
+        "id": 660001,
+        "fullName": "Ace Outfielder",
+        "primaryPosition": { "code": "8", "abbreviation": "CF" },
+        "batSide": { "code": "L", "description": "Left" },
+        "pitchHand": { "code": "R", "description": "Right" }
+      },
+      "ID660002": {
+        "id": 660002,
+        "fullName": "Lefty Starter",
+        "primaryPosition": { "code": "1", "abbreviation": "P" },
+        "batSide": { "code": "L", "description": "Left" },
+        "pitchHand": { "code": "L", "description": "Left" }
+      },
+      "ID660003": {
+        "id": 660003,
+        "fullName": "Slugging Catcher",
+        "primaryPosition": { "code": "2", "abbreviation": "C" },
+        "batSide": { "code": "R", "description": "Right" },
+        "pitchHand": { "code": "R", "description": "Right" }
+      },
+      "ID660004": {
+        "id": 660004,
+        "fullName": "Righty Reliever",
+        "primaryPosition": { "code": "1", "abbreviation": "P" },
+        "batSide": { "code": "R", "description": "Right" },
+        "pitchHand": { "code": "R", "description": "Right" }
+      }
+    },
+    "venue": { "id": 680, "name": "T-Mobile Park" }
+  },
+  "liveData": {
+    "linescore": {
+      "currentInning": 9,
+      "teams": {
+        "home": { "runs": 5, "hits": 9, "errors": 0 },
+        "away": { "runs": 3, "hits": 7, "errors": 1 }
+      }
+    }
+  }
+}

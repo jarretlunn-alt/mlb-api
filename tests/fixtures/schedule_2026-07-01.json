@@ -1,0 +1,57 @@
+{
+  "totalGames": 2,
+  "dates": [
+    {
+      "date": "2026-07-01",
+      "totalGames": 2,
+      "games": [
+        {
+          "gamePk": 700001,
+          "gameType": "R",
+          "season": "2026",
+          "officialDate": "2026-07-01",
+          "status": {
+            "abstractGameState": "Final",
+            "codedGameState": "F",
+            "detailedState": "Final",
+            "statusCode": "F"
+          },
+          "teams": {
+            "away": {
+              "score": 3,
+              "isWinner": false,
+              "team": { "id": 133, "name": "Athletics" }
+            },
+            "home": {
+              "score": 5,
+              "isWinner": true,
+              "team": { "id": 136, "name": "Seattle Mariners" }
+            }
+          },
+          "venue": { "id": 680, "name": "T-Mobile Park" }
+        },
+        {
+          "gamePk": 700002,
+          "gameType": "R",
+          "season": "2026",
+          "officialDate": "2026-07-01",
+          "status": {
+            "abstractGameState": "Preview",
+            "codedGameState": "S",
+            "detailedState": "Scheduled",
+            "statusCode": "S"
+          },
+          "teams": {
+            "away": {
+              "team": { "id": 119, "name": "Los Angeles Dodgers" }
+            },
+            "home": {
+              "team": { "id": 137, "name": "San Francisco Giants" }
+            }
+          },
+          "venue": { "id": 2395, "name": "Oracle Park" }
+        }
+      ]
+    }
+  ]
+}

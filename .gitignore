@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
+
+# Data: raw API responses and the local warehouse are not committed.
+# Curated Parquet in data/marts/ IS committed (small, columnar).
+data/raw/
+data/warehouse.duckdb
+*.duckdb.wal
+
+# OS
+.DS_Store
+Thumbs.db

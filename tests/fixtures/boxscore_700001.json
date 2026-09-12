@@ -1,0 +1,102 @@
+{
+  "teams": {
+    "away": {
+      "team": { "id": 133, "name": "Athletics" },
+      "teamStats": {
+        "batting": { "runs": 3, "hits": 7, "homeRuns": 1, "strikeOuts": 9, "baseOnBalls": 2 },
+        "pitching": { "runs": 5, "hits": 9, "strikeOuts": 6, "baseOnBalls": 3 },
+        "fielding": { "errors": 1 }
+      },
+      "players": {
+        "ID660001": {
+          "person": { "id": 660001, "fullName": "Ace Outfielder" },
+          "position": { "code": "8", "abbreviation": "CF" },
+          "stats": {
+            "batting": {
+              "atBats": 4,
+              "runs": 1,
+              "hits": 2,
+              "doubles": 1,
+              "triples": 0,
+              "homeRuns": 1,
+              "rbi": 2,
+              "baseOnBalls": 0,
+              "strikeOuts": 1,
+              "stolenBases": 0
+            },
+            "pitching": {},
+            "fielding": {}
+          }
+        },
+        "ID660002": {
+          "person": { "id": 660002, "fullName": "Lefty Starter" },
+          "position": { "code": "1", "abbreviation": "P" },
+          "stats": {
+            "batting": {},
+            "pitching": {
+              "inningsPitched": "6.0",
+              "outs": 18,
+              "hits": 5,
+              "runs": 2,
+              "earnedRuns": 2,
+              "baseOnBalls": 1,
+              "strikeOuts": 7,
+              "homeRuns": 1,
+              "numberOfPitches": 95
+            },
+            "fielding": {}
+          }
+        }
+      }
+    },
+    "home": {
+      "team": { "id": 136, "name": "Seattle Mariners" },
+      "teamStats": {
+        "batting": { "runs": 5, "hits": 9, "homeRuns": 2, "strikeOuts": 6, "baseOnBalls": 3 },
+        "pitching": { "runs": 3, "hits": 7, "strikeOuts": 9, "baseOnBalls": 2 },
+        "fielding": { "errors": 0 }
+      },
+      "players": {
+        "ID660003": {
+          "person": { "id": 660003, "fullName": "Slugging Catcher" },
+          "position": { "code": "2", "abbreviation": "C" },
+          "stats": {
+            "batting": {
+              "atBats": 4,
+              "runs": 2,
+              "hits": 3,
+              "doubles": 0,
+              "triples": 0,
+              "homeRuns": 2,
+              "rbi": 4,
+              "baseOnBalls": 0,
+              "strikeOuts": 0,
+              "stolenBases": 0
+            },
+            "pitching": {},
+            "fielding": {}
+          }
+        },
+        "ID660004": {
+          "person": { "id": 660004, "fullName": "Righty Reliever" },
+          "position": { "code": "1", "abbreviation": "P" },
+          "stats": {
+            "batting": {},
+            "pitching": {
+              "inningsPitched": "3.0",
+              "outs": 9,
+              "hits": 2,
+              "runs": 0,
+              "earnedRuns": 0,
+              "baseOnBalls": 0,
+              "strikeOuts": 5,
+              "homeRuns": 0,
+              "numberOfPitches": 41
+            },
+            "fielding": {}
+          }
+        }
+      }
+    }
+  }
+}
