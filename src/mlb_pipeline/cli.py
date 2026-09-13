@@ -8,7 +8,7 @@ import pickle
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import dashboard, db, ingest, marts, predict as predict_module
+from . import dashboard, db, ingest, marts, predict as predict_module, schedule
 from .api_client import MLBApiClient
 from .config import Settings
 from .models import ensemble
@@ -32,9 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest.add_argument("--start-date", required=True, help="YYYY-MM-DD")
     p_ingest.add_argument("--end-date", help="YYYY-MM-DD (defaults to start date)")
 
-    sub.add_parser("build-marts", help="Create mart views and export Parquet")
-    sub.add_parser("dashboard", help="Render the static HTML dashboard")
-    sub.add_parser("restore", help="Rebuild the warehouse from exported Parquet")
+    p_fetch = sub.add_parser(
+        "fetch-schedule", help="Fetch upcoming schedule and store in fact_game (no overwrites)"
+    )
+    p_fetch.add_argument("--start-date", required=True, help="YYYY-MM-DD")
+    p_fetch.add_argument("--end-date", help="YYYY-MM-DD (defaults to start date)")
 
     p_train = sub.add_parser("train", help="Train the XGBoost ensemble model and save it to disk")
     p_train.add_argument("--seasons", type=int, nargs="+", default=None,
@@ -42,6 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_predict = sub.add_parser("predict", help="Predict win probabilities for a date's games")
     p_predict.add_argument("--date", required=True, help="YYYY-MM-DD")
+
+    sub.add_parser("build-marts", help="Create mart views and export Parquet")
+    sub.add_parser("dashboard", help="Render the static HTML dashboard")
+    sub.add_parser("restore", help="Rebuild the warehouse from exported Parquet")
     return parser
 
 
@@ -63,29 +69,36 @@ def run_train(con, settings: Settings, seasons: list[int] | None = None) -> int:
 
 
 def run_predict(con, settings: Settings, target_date: str) -> int:
+    """Predict using the saved ensemble model; fall back to Pythagorean if no model."""
     model_path = _model_path(settings)
-    if not model_path.exists():
-        print("Run: python -m mlb_pipeline.cli train")
-        return 1
-    with open(model_path, "rb") as f:
-        model = pickle.load(f)
-    games = con.execute(
-        "SELECT game_pk, home_team_id, away_team_id FROM fact_game WHERE official_date = ?",
-        [target_date],
-    ).fetchall()
-    if not games:
-        print(f"No games found for {target_date}")
-        return 0
-    predictions = [
-        ensemble.predict(model, con, game_pk, home_id, away_id, target_date)
-        for game_pk, home_id, away_id in games
-    ]
-    predict_module.save_predictions(con, predictions)
-    print(f"{'game_pk':>10} | {'home_team_id':>12} | {'away_team_id':>12} | "
-          f"{'home_win_prob':>13} | {'away_win_prob':>13}")
-    for (game_pk, home_id, away_id), pred in zip(games, predictions):
-        print(f"{game_pk:>10} | {home_id:>12} | {away_id:>12} | "
-              f"{pred.home_win_prob:>13.3f} | {pred.away_win_prob:>13.3f}")
+    if model_path.exists():
+        with open(model_path, "rb") as f:
+            model = pickle.load(f)
+        games = con.execute(
+            "SELECT game_pk, home_team_id, away_team_id FROM fact_game WHERE official_date = ?",
+            [target_date],
+        ).fetchall()
+        if not games:
+            print(f"No games found for {target_date}. Run fetch-schedule first.")
+            return 0
+        predictions = [
+            ensemble.predict(model, con, game_pk, home_id, away_id, target_date)
+            for game_pk, home_id, away_id in games
+        ]
+        predict_module.save_predictions(con, predictions)
+        print(f"{'game_pk':>10} | {'home_win_prob':>13} | {'away_win_prob':>13}")
+        for pred in predictions:
+            print(f"{pred.game_pk:>10} | {pred.home_win_prob:>13.3f} | {pred.away_win_prob:>13.3f}")
+    else:
+        # No trained model yet — fall back to Pythagorean predictor
+        preds = schedule.predict_games(con, target_date)
+        if not preds:
+            print(f"No scheduled games found for {target_date}. Run fetch-schedule first.")
+        else:
+            for p in preds:
+                print(f"  game {p['game_pk']}: home {p['home_win_prob']*100:.1f}% / "
+                      f"away {p['away_win_prob']*100:.1f}%  [{p['model_name']}]")
+            print(f"{len(preds)} prediction(s) saved. (Hint: run train for ensemble model)")
     return 0
 
 
@@ -95,7 +108,13 @@ def main(argv=None) -> int:
     con = db.connect(settings.db_path)
     exit_code = 0
     try:
-        if args.command == "ingest":
+        if args.command == "fetch-schedule":
+            client = MLBApiClient()
+            end_date = args.end_date or args.start_date
+            result = schedule.fetch_schedule(client, con, args.start_date, end_date)
+            print(f"Fetched schedule {result['start_date']} – {result['end_date']}: "
+                  f"{result['games_scheduled']} upcoming game(s) added")
+        elif args.command == "ingest":
             client = MLBApiClient()
             end_date = args.end_date or args.start_date
             results = ingest.ingest_date_range(client, con, settings, args.start_date, end_date)

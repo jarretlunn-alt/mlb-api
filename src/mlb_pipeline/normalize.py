@@ -42,6 +42,28 @@ def is_final(schedule_game: dict) -> bool:
     )
 
 
+def normalize_scheduled_game(schedule_game: dict) -> dict:
+    """Minimal fact_game row from a schedule entry for a not-yet-played game.
+
+    Score and winner columns are left NULL so they don't overwrite completed rows.
+    """
+    teams = schedule_game.get("teams", {})
+    season = schedule_game.get("season")
+    return {
+        "game_pk": schedule_game["gamePk"],
+        "official_date": schedule_game.get("officialDate"),
+        "season": int(season) if season else None,
+        "game_type": schedule_game.get("gameType"),
+        "status": schedule_game.get("status", {}).get("detailedState", "Scheduled"),
+        "venue": (schedule_game.get("venue") or {}).get("name"),
+        "home_team_id": (teams.get("home") or {}).get("team", {}).get("id"),
+        "away_team_id": (teams.get("away") or {}).get("team", {}).get("id"),
+        "home_score": None,
+        "away_score": None,
+        "winning_team_id": None,
+    }
+
+
 def extract_game_pks(schedule: dict, only_final: bool = True) -> list[int]:
     """gamePk values from a schedule payload, optionally completed games only."""
     pks = []

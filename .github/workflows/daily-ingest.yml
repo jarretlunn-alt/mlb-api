@@ -48,6 +48,17 @@ jobs:
       - name: Ingest
         run: make ingest-date DATE=${{ steps.date.outputs.date }}
 
+      - name: Fetch upcoming schedule (today + 7 days)
+        run: |
+          START=$(date -u -d 'tomorrow' +%F)
+          END=$(date -u -d '+7 days' +%F)
+          python -m mlb_pipeline.cli fetch-schedule --start-date "$START" --end-date "$END"
+
+      - name: Generate predictions for tomorrow
+        run: |
+          TOMORROW=$(date -u -d 'tomorrow' +%F)
+          python -m mlb_pipeline.cli predict --date "$TOMORROW"
+
       - name: Build marts
         run: make build-marts
 

@@ -36,6 +36,20 @@ def init_schema(con: duckdb.DuckDBPyConnection, schema_path: Path = SCHEMA_PATH)
     con.execute(schema_path.read_text(encoding="utf-8"))
 
 
+def insert_ignore(con: duckdb.DuckDBPyConnection, table: str, rows: list[dict]) -> int:
+    """Insert rows, silently skipping any whose primary key already exists."""
+    if not rows:
+        return 0
+    columns = list(rows[0].keys())
+    placeholders = ", ".join(["?"] * len(columns))
+    sql = (
+        f"INSERT OR IGNORE INTO {table} ({', '.join(columns)}) "
+        f"VALUES ({placeholders})"
+    )
+    con.executemany(sql, [[row[c] for c in columns] for row in rows])
+    return len(rows)
+
+
 def upsert(con: duckdb.DuckDBPyConnection, table: str, rows: list[dict]) -> int:
     """Idempotent load: INSERT OR REPLACE keyed on the table's primary key."""
     if not rows:

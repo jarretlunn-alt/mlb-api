@@ -37,6 +37,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 """
 
 SECTIONS = [
+    ("Upcoming Predictions", "upcoming", "SELECT * FROM mart_upcoming_predictions"),
     ("Predictions", "predictions", "SELECT * FROM mart_predictions"),
     ("Games by Date", "games", "SELECT * FROM mart_games_by_date"),
     ("Team Records &amp; Runs", "records", "SELECT * FROM mart_team_records"),
@@ -72,7 +73,12 @@ def render_dashboard(con, site_dir: Path) -> Path:
     for section_info in SECTIONS:
         title, section_id, query = section_info
 
-        if section_id == "predictions":
+        if section_id == "upcoming":
+            table_html = _render_guarded_prediction_section(
+                con, "mart_upcoming_predictions",
+                "No upcoming predictions — run: python -m mlb_pipeline.cli fetch-schedule, then predict"
+            )
+        elif section_id == "predictions":
             table_html = _render_predictions_section(con)
         else:
             try:
@@ -94,6 +100,23 @@ def render_dashboard(con, site_dir: Path) -> Path:
     out_path = site_dir / "index.html"
     out_path.write_text(page, encoding="utf-8")
     return out_path
+
+
+def _render_guarded_prediction_section(con, view_name: str, empty_msg: str) -> str:
+    """Render a mart view that depends on fact_prediction, gracefully if missing."""
+    try:
+        con.execute("SELECT 1 FROM fact_prediction LIMIT 1")
+    except Exception:
+        return f'<p class="empty">{empty_msg}</p>'
+    try:
+        result = con.execute(f"SELECT * FROM {view_name}")
+        columns = [d[0] for d in result.description]
+        rows = result.fetchall()
+        if not rows:
+            return f'<p class="empty">{empty_msg}</p>'
+        return _render_table(columns, rows)
+    except Exception:
+        return f'<p class="empty">{empty_msg}</p>'
 
 
 def _render_predictions_section(con) -> str:
