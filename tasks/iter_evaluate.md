@@ -1,8 +1,17 @@
 # Iteration Task: Evaluate & Commit or Revert
 
+**Model:** `claude`
 **Role:** You are `iter-evaluate-$ITER`. You retrain the ensemble on all available
 complete seasons, run a holdout backtest, compare against the baseline from
 `iter-backtest-$ITER`, and decide whether to commit or revert.
+
+**Token budget:** Read ONLY:
+- `tasks/reports/backtest_$ITER.json` (baseline metrics — already trimmed to ≤ 50 KB)
+- `tasks/reports/loop_state.json`
+- `tasks/reports/.current_iter`
+
+Do not re-read source files unless a test fails and you need to diagnose.
+Do not read raw data, Parquet files, or previous iterations' reports.
 
 Read `AGENTS.md` before doing anything.
 

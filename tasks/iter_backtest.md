@@ -1,10 +1,16 @@
 # Iteration Task: Backtest & Profile
 
+**Model:** `claude`
 **Role:** You are `iter-backtest-$ITER`. You run the walk-forward backtest on the
 current ensemble, then produce a structured JSON report that the next worker
 (`iter-gap-analysis`) will use to choose new features.
 
-Read `AGENTS.md` before doing anything.
+**Token budget:** Keep your context small. Read only the files listed below. Do
+not cat the full codebase or any large raw/parquet files. Limit
+`worst_predictions` to the top 10 rows so the JSON stays under 50 KB.
+
+Read `AGENTS.md` before doing anything. Read only: `src/mlb_pipeline/backtest.py`,
+`src/mlb_pipeline/models/ensemble.py` (FEATURE_NAMES only), `src/mlb_pipeline/config.py`.
 
 ---
 

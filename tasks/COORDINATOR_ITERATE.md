@@ -10,28 +10,57 @@ Use **only** `orca orchestration` CLI commands.
 
 ---
 
+## Model assignment strategy
+
+Each worker phase is assigned to the LLM best suited to it. Alternating the
+gap-analysis worker between Claude and Codex across iterations deliberately
+generates different analytical perspectives and feature hypotheses.
+
+| Phase | Model | Reason |
+|-------|-------|--------|
+| `iter-backtest` | `claude` | Heavy SQL + metric reasoning; calibration analysis |
+| `iter-gap-analysis` | Odd iterations → `codex`, Even iterations → `claude` | Rotates perspective; Codex tends toward pattern/code-search, Claude toward statistical reasoning |
+| `iter-implement` | `codex` | Codex generates precise, concise Python; fewer hallucinated function names |
+| `iter-evaluate` | `claude` | Decision logic, nuanced comparison, commit message writing |
+
+Pass `--model <name>` on every `worker-start` call. If the Orca CLI uses a
+different flag (e.g. `--agent`, `--llm`), substitute accordingly.
+
+---
+
+## Token budget rules (applied by the coordinator)
+
+These are hard limits to prevent workers from exhausting context:
+
+- `backtest_N.json` — must be ≤ 50 KB. Coordinator truncates `worst_predictions`
+  to the top 10 rows before signalling gap-analysis (see Step 2c).
+- `proposal_N.md` — must be ≤ 600 words. Gap-analysis worker is told this explicitly.
+- `iter-implement` context string — include ONLY the two feature IDs + column names
+  from the proposal. Do not paste the full proposal text into the context.
+- `iter-evaluate` context string — include ONLY the baseline Brier and the model path.
+
+---
+
 ## Loop structure (per iteration N)
 
 ```
-iter-backtest-N    →    iter-gap-analysis-N    →    iter-implement-N    →    iter-evaluate-N
-                                                                               ↓
-                                                               (commit or revert, then N+1)
+iter-backtest-N  →  iter-gap-analysis-N  →  iter-implement-N  →  iter-evaluate-N
+   (claude)            (codex/claude)            (codex)              (claude)
+                                                                          ↓
+                                                          (commit or revert, then N+1)
 ```
 
-Workers within an iteration are **sequential** — each waits for the prior one
-before starting. Across iterations they are also sequential — do not start
-iteration N+1 until iter-evaluate-N has signalled `worker_done`.
+Workers within an iteration are **sequential** — each waits for the prior one.
+Do not start N+1 until iter-evaluate-N has signalled `worker_done`.
 
 ---
 
 ## Gate conditions (stop and wait for human)
 
 The coordinator does **not** gate — individual workers do. Your job is:
-1. Watch for gates opened by workers (via `orca orchestration check --wait`)
-2. If a gate appears, **stop dispatching** and notify the human with a summary
+1. Watch for gates opened by workers (`orca orchestration check --wait`)
+2. If a gate appears, **stop dispatching** and surface a summary to the human
 3. Resume only after the gate is resolved
-
-A gate is always preferable to proceeding with a degraded model.
 
 ---
 
@@ -40,7 +69,6 @@ A gate is always preferable to proceeding with a degraded model.
 ### 0a. Initialize loop state if not present
 
 ```sh
-ITER=1
 if [ ! -f tasks/reports/.current_iter ]; then
     echo "1" > tasks/reports/.current_iter
     echo '{"tried_features":[],"no_improve_count":0,"best_brier":null,"last_iter":0}' \
@@ -52,7 +80,7 @@ fi
 
 ```sh
 RUN_ID=$(orca orchestration run-create \
-  --objective "Autonomous MLB model improvement loop. Run up to 8 iterations. Each iteration: backtest → gap-analysis → implement → evaluate. Stop only for gate conditions (plateau, NaN, degradation, pool exhaustion). Do not require human input between iterations." \
+  --objective "Autonomous MLB model improvement loop. Up to 8 iterations. Each: backtest(claude) → gap-analysis(codex/claude alternating) → implement(codex) → evaluate(claude). Stop only for gate conditions. No human input needed between iterations." \
   --json | jq -r '.run_id')
 echo "Run ID: $RUN_ID"
 ```
@@ -63,12 +91,14 @@ echo "Run ID: $RUN_ID"
 
 ```sh
 ITER=$(cat tasks/reports/.current_iter)
-echo "Starting iteration $ITER"
+# Determine gap-analysis model: Codex on odd iterations, Claude on even
+if [ $((ITER % 2)) -eq 1 ]; then GAP_MODEL="codex"; else GAP_MODEL="claude"; fi
+echo "Starting iteration $ITER (gap-analysis model: $GAP_MODEL)"
 ```
 
 ---
 
-## Step 2 — Dispatch iter-backtest-N
+## Step 2 — Dispatch iter-backtest-N (model: claude)
 
 ```sh
 BACKTEST_TASK_ID=$(orca orchestration task-create \
@@ -78,13 +108,12 @@ BACKTEST_TASK_ID=$(orca orchestration task-create \
 
 BACKTEST_DISPATCH_ID=$(orca orchestration worker-start \
   --task $BACKTEST_TASK_ID \
-  --context "ITER=$ITER. TASK_ID=$BACKTEST_TASK_ID. Run the backtest for iteration $ITER and write tasks/reports/backtest_$ITER.json." \
+  --model claude \
+  --context "ITER=$ITER. TASK_ID=$BACKTEST_TASK_ID. Write tasks/reports/backtest_$ITER.json. Keep worst_predictions to top 10 rows only to limit file size." \
   --json | jq -r '.dispatch_id')
 
-# Wait for completion
 orca orchestration check --dispatch-id $BACKTEST_DISPATCH_ID --wait
 
-# Check for gate
 GATE=$(orca orchestration gate-list --task $BACKTEST_TASK_ID --status open --json 2>/dev/null | jq -r '.gates[0].gate_id // empty')
 if [ -n "$GATE" ]; then
     echo "GATE OPENED by iter-backtest-$ITER. Loop paused. Gate: $GATE"
@@ -92,9 +121,31 @@ if [ -n "$GATE" ]; then
 fi
 ```
 
+### 2c — Enforce token budget on the backtest report
+
+After the worker completes, trim the report if it exceeds 50 KB:
+```sh
+python - <<'PY'
+import json, sys
+from pathlib import Path
+ITER = int(open("tasks/reports/.current_iter").read())
+p = Path(f"tasks/reports/backtest_{ITER}.json")
+report = json.loads(p.read_text())
+report["worst_predictions"] = report.get("worst_predictions", [])[:10]
+# Drop full calibration if still large; keep only buckets with n > 5
+if p.stat().st_size > 50_000:
+    report["calibration"] = {
+        k: v for k, v in report.get("calibration", {}).items()
+        if v.get("n", 0) > 5
+    }
+p.write_text(json.dumps(report, indent=2, default=str))
+print(f"Backtest report: {p.stat().st_size/1024:.1f} KB")
+PY
+```
+
 ---
 
-## Step 3 — Dispatch iter-gap-analysis-N
+## Step 3 — Dispatch iter-gap-analysis-N (model: alternates)
 
 ```sh
 GAP_TASK_ID=$(orca orchestration task-create \
@@ -104,7 +155,8 @@ GAP_TASK_ID=$(orca orchestration task-create \
 
 GAP_DISPATCH_ID=$(orca orchestration worker-start \
   --task $GAP_TASK_ID \
-  --context "ITER=$ITER. TASK_ID=$GAP_TASK_ID. Read tasks/reports/backtest_$ITER.json and write tasks/reports/proposal_$ITER.md." \
+  --model $GAP_MODEL \
+  --context "ITER=$ITER. TASK_ID=$GAP_TASK_ID. MODEL=$GAP_MODEL. Read tasks/reports/backtest_$ITER.json and tasks/reports/loop_state.json. Write tasks/reports/proposal_$ITER.md (max 600 words). Do NOT read the full codebase — only features.py FEATURE_NAMES and ensemble.py FEATURE_NAMES are needed to check what is already implemented." \
   --json | jq -r '.dispatch_id')
 
 orca orchestration check --dispatch-id $GAP_DISPATCH_ID --wait
@@ -118,7 +170,15 @@ fi
 
 ---
 
-## Step 4 — Dispatch iter-implement-N
+## Step 4 — Dispatch iter-implement-N (model: codex)
+
+Extract just the feature IDs and column names from the proposal to keep context small:
+```sh
+# Pull the two "Column name in FEATURE_NAMES:" lines from the proposal
+FEAT_SUMMARY=$(grep "Column name in FEATURE_NAMES" tasks/reports/proposal_$ITER.md \
+    | sed 's/.*: //' | tr '\n' ',' | sed 's/,$//')
+echo "Features to implement: $FEAT_SUMMARY"
+```
 
 ```sh
 IMPL_TASK_ID=$(orca orchestration task-create \
@@ -128,7 +188,8 @@ IMPL_TASK_ID=$(orca orchestration task-create \
 
 IMPL_DISPATCH_ID=$(orca orchestration worker-start \
   --task $IMPL_TASK_ID \
-  --context "ITER=$ITER. TASK_ID=$IMPL_TASK_ID. Read tasks/reports/proposal_$ITER.md and implement the 2 proposed features in features.py and ensemble.py. All tests must pass before signalling done." \
+  --model codex \
+  --context "ITER=$ITER. TASK_ID=$IMPL_TASK_ID. Features to add: $FEAT_SUMMARY. Full spec in tasks/reports/proposal_$ITER.md. Modify ONLY: src/mlb_pipeline/features.py, src/mlb_pipeline/models/ensemble.py. Create: tests/test_features_iter${ITER}.py. Run python -m pytest -q to verify all pass." \
   --json | jq -r '.dispatch_id')
 
 orca orchestration check --dispatch-id $IMPL_DISPATCH_ID --wait
@@ -142,9 +203,11 @@ fi
 
 ---
 
-## Step 5 — Dispatch iter-evaluate-N
+## Step 5 — Dispatch iter-evaluate-N (model: claude)
 
 ```sh
+BASELINE_BRIER=$(python -c "import json; print(json.load(open(f'tasks/reports/backtest_$ITER.json'))['brier_score'])")
+
 EVAL_TASK_ID=$(orca orchestration task-create \
   --spec "$(cat tasks/iter_evaluate.md)" \
   --task-title "iter-evaluate-$ITER" \
@@ -152,7 +215,8 @@ EVAL_TASK_ID=$(orca orchestration task-create \
 
 EVAL_DISPATCH_ID=$(orca orchestration worker-start \
   --task $EVAL_TASK_ID \
-  --context "ITER=$ITER. TASK_ID=$EVAL_TASK_ID. Retrain, run holdout backtest, compare to tasks/reports/backtest_$ITER.json baseline. Commit if Δbrier>=0.002, else revert. Update loop state and .current_iter." \
+  --model claude \
+  --context "ITER=$ITER. TASK_ID=$EVAL_TASK_ID. Baseline Brier=$BASELINE_BRIER. Retrain, holdout backtest, write tasks/reports/evaluation_$ITER.json. Commit if delta_brier>=0.002. Update tasks/reports/loop_state.json and tasks/reports/.current_iter." \
   --json | jq -r '.dispatch_id')
 
 orca orchestration check --dispatch-id $EVAL_DISPATCH_ID --wait
@@ -166,52 +230,54 @@ fi
 
 ---
 
-## Step 6 — Read outcome and decide whether to continue
+## Step 6 — Read outcome and log summary
 
 ```sh
 EVAL_REPORT="tasks/reports/evaluation_$ITER.json"
-DECISION=$(jq -r '.decision' "$EVAL_REPORT")
-NO_IMPROVE=$(jq -r '.no_improve_count' tasks/reports/loop_state.json)
-ITER=$(cat tasks/reports/.current_iter)  # iter-evaluate already incremented this
+DECISION=$(python -c "import json; print(json.load(open('$EVAL_REPORT'))['decision'])")
+NEW_BRIER=$(python -c "import json; print(json.load(open('$EVAL_REPORT'))['new_brier'])")
+DELTA=$(python -c "import json; print(json.load(open('$EVAL_REPORT'))['delta_brier'])")
+NO_IMPROVE=$(python -c "import json; print(json.load(open('tasks/reports/loop_state.json'))['no_improve_count'])")
+NEXT_ITER=$(cat tasks/reports/.current_iter)
 
-echo "Iteration $((ITER-1)) complete. Decision: $DECISION. No-improve streak: $NO_IMPROVE."
+echo "=== Iteration $ITER complete ==="
+echo "Decision: $DECISION | Δbrier=$DELTA | New Brier=$NEW_BRIER | No-improve streak: $NO_IMPROVE/3"
+echo "Gap model this iteration: $GAP_MODEL"
 
 # Maximum iterations guard
-if [ "$ITER" -gt 8 ]; then
+if [ "$NEXT_ITER" -gt 8 ]; then
     echo "Reached maximum 8 iterations. Loop complete."
     exit 0
 fi
 
-# Plateau: 3 consecutive no-improve — workers already fired the gate; stop here too
+# Plateau guard
 if [ "$NO_IMPROVE" -ge 3 ]; then
-    echo "Plateau detected after 3 consecutive no-improvement iterations. Stopping."
+    echo "Plateau: 3 consecutive no-improvement iterations. Stopping (gate should be open)."
     exit 0
 fi
 
-# Otherwise loop: go back to Step 1
-echo "Continuing to iteration $ITER..."
-# (re-run Steps 1-6 with new ITER)
+echo "Continuing to iteration $NEXT_ITER..."
+# Re-run from Step 1 with ITER=$NEXT_ITER
 ```
 
 ---
 
 ## Step 7 — Loop
 
-Repeat Steps 1-6 until one of these stop conditions:
+Repeat Steps 1-6 until one of:
 - A gate was opened (human required)
-- `ITER > 8`
+- `NEXT_ITER > 8`
 - `no_improve_count >= 3`
-- All 10 candidate features tried (pool exhaustion gate was opened)
+- Feature pool exhausted (gap-analysis opens a gate)
 
 ---
 
-## Summary to report to the user after each iteration
-
-After iter-evaluate completes (whether commit or revert), log a one-line summary:
+## Per-iteration log (append after each Step 6)
 
 ```
-Iteration N: Δbrier=+0.003 [commit] → best Brier=0.231, KellyROI=+4.2%, features added: F02+F07
-Iteration N: Δbrier=-0.001 [revert] → best Brier=0.234, no-improve streak: 1/3
+Iter 1 [codex gap]: Δbrier=+0.003 [commit] → Brier=0.231, KellyROI=+4.2%, features: F02+F07
+Iter 2 [claude gap]: Δbrier=-0.001 [revert] → Brier=0.231, no-improve: 1/3
+Iter 3 [codex gap]: Δbrier=+0.002 [commit] → Brier=0.229, KellyROI=+5.1%, features: F04+F09
 ```
 
 ---
@@ -219,7 +285,9 @@ Iteration N: Δbrier=-0.001 [revert] → best Brier=0.234, no-improve streak: 1/
 ## Gate response protocol
 
 If a gate is opened and the human responds:
-- `"Stop the loop"` → send a final `worker_done` summary and exit
-- `"Continue"` → read the current_iter and restart from Step 1
+- `"Stop the loop"` → send a final summary and exit
+- `"Continue"` → read `.current_iter` and restart from Step 1
 - `"Reset"` → `git checkout HEAD -- src/mlb_pipeline/features.py src/mlb_pipeline/models/ensemble.py`, then restart from Step 1
 - `"I will fix manually"` → wait for human to signal ready, then restart
+- `"Use only Claude"` → set `GAP_MODEL=claude` and `IMPL_MODEL=claude` for all remaining iterations
+- `"Use only Codex"` → set `GAP_MODEL=codex` and `IMPL_MODEL=codex` for all remaining iterations

@@ -1,8 +1,17 @@
 # Iteration Task: Implement Proposed Features
 
+**Model:** `codex`
 **Role:** You are `iter-implement-$ITER`. You read `tasks/reports/proposal_$ITER.md`
 and implement the two proposed features in `features.py` and `ensemble.py`.
 Your work is purely additive — do not remove existing features.
+
+**Token budget:** Read ONLY these files (nothing else):
+- `tasks/reports/proposal_$ITER.md` (the spec)
+- `src/mlb_pipeline/features.py` (to append your new functions)
+- `src/mlb_pipeline/models/ensemble.py` (FEATURE_NAMES + _feature_row only)
+- `tests/conftest.py` (fixture shapes only — read the first 60 lines)
+
+Do not read the full test suite, raw data files, or Parquet exports.
 
 Read `AGENTS.md` before doing anything.
 

@@ -1,8 +1,14 @@
 # Iteration Task: Feature Gap Analysis
 
+**Model:** alternates — `codex` on odd iterations, `claude` on even iterations
 **Role:** You are `iter-gap-analysis-$ITER`. You read the backtest report from
 `iter-backtest-$ITER` and decide which 2 features from the candidate pool will
 most reduce error, given the specific patterns in this iteration's predictions.
+
+**Token budget:** Read ONLY `tasks/reports/backtest_$ITER.json`,
+`tasks/reports/loop_state.json`, and the `FEATURE_NAMES` tuple from
+`src/mlb_pipeline/models/ensemble.py`. Do not read the full codebase.
+Write `tasks/reports/proposal_$ITER.md` in ≤ 600 words total.
 
 Read `AGENTS.md` before doing anything.
 
