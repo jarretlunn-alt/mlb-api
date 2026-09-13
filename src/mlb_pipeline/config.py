@@ -10,7 +10,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path = Path("data")
-    site_dir: Path = Path("site")
+    site_dir: Path = Path("docs")
 
     @property
     def raw_dir(self) -> Path:
@@ -28,5 +28,5 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             data_dir=Path(os.environ.get("MLB_DATA_DIR", "data")),
-            site_dir=Path(os.environ.get("MLB_SITE_DIR", "site")),
+            site_dir=Path(os.environ.get("MLB_SITE_DIR", "docs")),
         )
