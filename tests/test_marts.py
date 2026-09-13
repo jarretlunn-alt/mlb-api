@@ -31,7 +31,12 @@ def test_export_and_restore_roundtrip(fake_client, con, settings, tmp_path):
     ingest.ingest_date(fake_client, con, settings, "2026-07-01")
     paths = marts.export_parquet(con, settings.marts_dir)
 
-    assert len(paths) == len(db.TABLES) + len(marts.MART_VIEWS)
+    try:
+        con.execute("SELECT 1 FROM fact_prediction LIMIT 1")
+        expected_count = len(db.TABLES) + len(marts.MART_VIEWS)
+    except Exception:
+        expected_count = len(db.TABLES) + len(marts.MART_VIEWS) - 1
+    assert len(paths) == expected_count
     for path in paths:
         assert path.exists()
 

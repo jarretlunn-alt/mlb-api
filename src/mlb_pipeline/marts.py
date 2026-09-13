@@ -12,6 +12,27 @@ from pathlib import Path
 from . import db
 
 MART_VIEWS = {
+    "mart_predictions": """
+        WITH recent_date AS (
+            SELECT MAX(g.official_date) AS max_date
+            FROM fact_prediction p
+            JOIN fact_game g ON g.game_pk = p.game_pk
+        )
+        SELECT
+            g.official_date AS game_date,
+            g.game_pk,
+            tm_away.name AS away_team,
+            tm_home.name AS home_team,
+            ROUND(p.home_win_prob * 100, 1) AS home_win_pct,
+            ROUND(p.away_win_prob * 100, 1) AS away_win_pct,
+            p.predicted_at
+        FROM fact_prediction p
+        JOIN fact_game g ON g.game_pk = p.game_pk
+        JOIN dim_team tm_home ON tm_home.team_id = g.home_team_id
+        JOIN dim_team tm_away ON tm_away.team_id = g.away_team_id
+        WHERE g.official_date = (SELECT max_date FROM recent_date)
+        ORDER BY g.game_pk
+    """,
     "mart_games_by_date": """
         SELECT
             g.official_date,
@@ -74,6 +95,11 @@ MART_VIEWS = {
 
 def create_views(con) -> None:
     for name, sql in MART_VIEWS.items():
+        if name == "mart_predictions":
+            try:
+                con.execute("SELECT 1 FROM fact_prediction LIMIT 1")
+            except Exception:
+                continue
         con.execute(f"CREATE OR REPLACE VIEW {name} AS {sql}")
 
 
@@ -85,8 +111,11 @@ def export_parquet(con, marts_dir: Path) -> list[Path]:
     paths = []
     for name in db.TABLES + list(MART_VIEWS):
         path = marts_dir / f"{name}.parquet"
-        con.execute(f"COPY (SELECT * FROM {name}) TO '{path.as_posix()}' (FORMAT PARQUET)")
-        paths.append(path)
+        try:
+            con.execute(f"COPY (SELECT * FROM {name}) TO '{path.as_posix()}' (FORMAT PARQUET)")
+            paths.append(path)
+        except Exception:
+            pass
     return paths
 
 

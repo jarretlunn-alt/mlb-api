@@ -37,8 +37,10 @@ def _complete_seasons(con):
         SELECT season FROM fact_game WHERE season < ? GROUP BY season
         HAVING count(*) FILTER (WHERE status = 'Final' AND home_score IS NOT NULL
             AND away_score IS NOT NULL AND home_score <> away_score) > 0
-        AND count(*) FILTER (WHERE status IS NULL OR status NOT IN
-            ('Final', 'Completed Early', 'Game Over', 'Cancelled', 'Postponed')) = 0
+        AND count(*) FILTER (WHERE status IS NULL OR NOT (
+            status LIKE 'Final%' OR status LIKE 'Completed Early%' OR
+            status LIKE 'Game Over%' OR status LIKE 'Cancelled%' OR
+            status LIKE 'Postponed%')) = 0
         ORDER BY season
     """, [date.today().year]).fetchall()]
 
@@ -50,7 +52,7 @@ def _games(con, seasons):
         SELECT game_pk, official_date, home_team_id, away_team_id,
                CAST(home_score > away_score AS INTEGER)
         FROM fact_game WHERE season IN ({','.join('?' for _ in seasons)})
-          AND status = 'Final' AND official_date IS NOT NULL
+          AND (status = 'Final' OR status LIKE 'Completed Early%') AND official_date IS NOT NULL
           AND home_team_id IS NOT NULL AND away_team_id IS NOT NULL
           AND home_score IS NOT NULL AND away_score IS NOT NULL
           AND home_score <> away_score

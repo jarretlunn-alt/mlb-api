@@ -51,6 +51,17 @@ jobs:
       - name: Build marts
         run: make build-marts
 
+      - name: Download model artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mlb-model
+          path: data/models/
+        continue-on-error: true
+
+      - name: Predict
+        run: python -m mlb_pipeline.cli predict --date ${{ steps.date.outputs.date }}
+        continue-on-error: true
+
       - name: Build dashboard
         run: make dashboard
 

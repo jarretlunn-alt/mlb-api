@@ -37,10 +37,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 """
 
 SECTIONS = [
-    ("Games by Date", "SELECT * FROM mart_games_by_date"),
-    ("Team Records &amp; Runs", "SELECT * FROM mart_team_records"),
-    ("Top Hitters (by hits, HR, RBI)", "SELECT * FROM mart_top_hitters LIMIT 15"),
-    ("Top Pitchers (by strikeouts, IP)", "SELECT * FROM mart_top_pitchers LIMIT 15"),
+    ("Predictions", "predictions", "SELECT * FROM mart_predictions"),
+    ("Games by Date", "games", "SELECT * FROM mart_games_by_date"),
+    ("Team Records &amp; Runs", "records", "SELECT * FROM mart_team_records"),
+    ("Top Hitters (by hits, HR, RBI)", "hitters", "SELECT * FROM mart_top_hitters LIMIT 15"),
+    ("Top Pitchers (by strikeouts, IP)", "pitchers", "SELECT * FROM mart_top_pitchers LIMIT 15"),
 ]
 
 
@@ -68,11 +69,21 @@ def _render_table(columns: list[str], rows: list[tuple]) -> str:
 def render_dashboard(con, site_dir: Path) -> Path:
     marts.create_views(con)
     sections_html = []
-    for title, query in SECTIONS:
-        result = con.execute(query)
-        columns = [d[0] for d in result.description]
-        rows = result.fetchall()
-        sections_html.append(f"<section><h2>{title}</h2>{_render_table(columns, rows)}</section>")
+    for section_info in SECTIONS:
+        title, section_id, query = section_info
+
+        if section_id == "predictions":
+            table_html = _render_predictions_section(con)
+        else:
+            try:
+                result = con.execute(query)
+                columns = [d[0] for d in result.description]
+                rows = result.fetchall()
+                table_html = _render_table(columns, rows)
+            except Exception:
+                table_html = '<p class="empty">Error loading section.</p>'
+
+        sections_html.append(f"<section><h2>{title}</h2>{table_html}</section>")
 
     page = PAGE_TEMPLATE.format(
         generated=dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M"),
@@ -83,3 +94,20 @@ def render_dashboard(con, site_dir: Path) -> Path:
     out_path = site_dir / "index.html"
     out_path.write_text(page, encoding="utf-8")
     return out_path
+
+
+def _render_predictions_section(con) -> str:
+    try:
+        con.execute("SELECT 1 FROM fact_prediction LIMIT 1")
+    except Exception:
+        return '<p class="empty">No predictions yet — run: python -m mlb_pipeline.cli predict</p>'
+
+    try:
+        result = con.execute("SELECT * FROM mart_predictions")
+        columns = [d[0] for d in result.description]
+        rows = result.fetchall()
+        if not rows:
+            return '<p class="empty">No predictions yet — run: python -m mlb_pipeline.cli predict</p>'
+        return _render_table(columns, rows)
+    except Exception:
+        return '<p class="empty">No predictions yet — run: python -m mlb_pipeline.cli predict</p>'
