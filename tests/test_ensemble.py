@@ -26,6 +26,7 @@ def warehouse(monkeypatch):
         lambda con, pk, day: {"home_runs_per_game": 4 + (pk % 3),
                              "away_runs_allowed_per_game": 3 + (pk % 2),
                              "park_run_factor": 1.02, "is_dome": True,
+                             "home_sp_fip_last_n": 3.5, "away_sp_fip_last_n": 4.0,
                              "home_score": 99, "home_win": True}))
     monkeypatch.setattr(ensemble, "_elo", SimpleNamespace(
         build_ratings_from_history=lambda con, day: {},
@@ -40,14 +41,14 @@ def warehouse(monkeypatch):
 def test_training_shape_and_skips(warehouse, monkeypatch):
     con, seasons = warehouse
     X, y = ensemble.build_training_set(con, seasons)
-    assert X.shape == (50, 8)
+    assert X.shape == (50, 10)
     assert y.shape == (50,)
     assert set(y) == {0, 1}
     assert np.isfinite(X).all()
     assert 99 not in X  # Outcomes are never included in X.
     monkeypatch.setattr(ensemble, "_features", SimpleNamespace(build_game_feature_row=lambda *a: None))
     X, y = ensemble.build_training_set(con, seasons)
-    assert X.shape == (0, 8)
+    assert X.shape == (0, 10)
     assert y.shape == (0,)
 
 

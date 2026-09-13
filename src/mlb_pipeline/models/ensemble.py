@@ -23,6 +23,7 @@ FEATURE_NAMES = (
     "elo_home_rating", "elo_away_rating", "poisson_lambda_home",
     "poisson_lambda_away", "home_runs_per_game_15d", "away_runs_allowed_15d",
     "home_park_factor", "is_dome",
+    "home_sp_fip_last_n", "away_sp_fip_last_n",
 )
 SEASON_ERROR = "Need at least 2 seasons of data to train. Run make ingest-date for more dates."
 
@@ -79,7 +80,8 @@ def _feature_row(con, game_pk, home_id, away_id, as_of_date, ratings=None):
     values = [ratings.get(home_id, 1500.0), ratings.get(away_id, 1500.0),
               pois.features["lam_home"], pois.features["lam_away"],
               raw.get("home_runs_per_game"), raw.get("away_runs_allowed_per_game"),
-              raw.get("park_run_factor", 1.0), raw.get("is_dome", 0.0)]
+              raw.get("park_run_factor", 1.0), raw.get("is_dome", 0.0),
+              raw.get("home_sp_fip_last_n"), raw.get("away_sp_fip_last_n")]
     if any(v is None for v in values):
         return None
     row = np.asarray(values, dtype=float)
