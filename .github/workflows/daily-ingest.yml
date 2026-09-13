@@ -58,6 +58,7 @@ jobs:
         run: |
           TOMORROW=$(date -u -d 'tomorrow' +%F)
           python -m mlb_pipeline.cli predict --date "$TOMORROW"
+        continue-on-error: true
 
       - name: Build marts
         run: make build-marts

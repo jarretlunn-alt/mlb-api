@@ -89,17 +89,13 @@ def run_predict(con, settings: Settings, target_date: str) -> int:
         print(f"{'game_pk':>10} | {'home_win_prob':>13} | {'away_win_prob':>13}")
         for pred in predictions:
             print(f"{pred.game_pk:>10} | {pred.home_win_prob:>13.3f} | {pred.away_win_prob:>13.3f}")
+        return 0
     else:
-        # No trained model yet — fall back to Pythagorean predictor
-        preds = schedule.predict_games(con, target_date)
-        if not preds:
-            print(f"No scheduled games found for {target_date}. Run fetch-schedule first.")
-        else:
-            for p in preds:
-                print(f"  game {p['game_pk']}: home {p['home_win_prob']*100:.1f}% / "
-                      f"away {p['away_win_prob']*100:.1f}%  [{p['model_name']}]")
-            print(f"{len(preds)} prediction(s) saved. (Hint: run train for ensemble model)")
-    return 0
+        print(
+            f"No model found at {model_path}. "
+            "Run python -m mlb_pipeline.cli train first."
+        )
+        return 1
 
 
 def main(argv=None) -> int:
