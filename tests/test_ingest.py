@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from mlb_pipeline import db, ingest, raw_store
@@ -80,3 +82,54 @@ def test_load_game_updates_on_replay(fake_client, con, settings, feed_live, boxs
     assert table_counts(con) == EXPECTED_COUNTS
     score = con.execute("SELECT home_score FROM fact_game WHERE game_pk = 700001").fetchone()[0]
     assert score == 6
+
+
+def test_fetch_schedule_inserts_rows(fake_client, con, settings):
+    result = ingest.fetch_schedule(fake_client, con, settings, "2026-07-01", "2026-07-01")
+
+    assert result == {"start_date": "2026-07-01", "end_date": "2026-07-01", "games_found": 2}
+    assert ("schedule", "2026-07-01", "2026-07-01") in fake_client.calls
+
+    rows = con.execute(
+        "SELECT game_pk, official_date, season, game_type, status, home_team_id, "
+        "away_team_id, home_score, away_score FROM fact_game ORDER BY game_pk"
+    ).fetchall()
+    assert rows == [
+        (700001, date(2026, 7, 1), 2026, "R", "Scheduled", 136, 133, None, None),
+        (700002, date(2026, 7, 1), 2026, "R", "Scheduled", 137, 119, None, None),
+    ]
+
+    raw_path = raw_store.raw_path(settings.raw_dir, "schedule", "2026-07-01_2026-07-01")
+    assert raw_path.exists()
+
+
+def test_fetch_schedule_does_not_overwrite_completed_game(fake_client, con, settings):
+    ingest.ingest_date(fake_client, con, settings, "2026-07-01")
+    before = con.execute(
+        "SELECT status, home_score, away_score FROM fact_game WHERE game_pk = 700001"
+    ).fetchone()
+    assert before == ("Final", 5, 3)
+
+    ingest.fetch_schedule(fake_client, con, settings, "2026-07-01", "2026-07-01")
+
+    after = con.execute(
+        "SELECT status, home_score, away_score FROM fact_game WHERE game_pk = 700001"
+    ).fetchone()
+    assert after == before
+
+    # The still-scheduled game in the same schedule response is still added
+    scheduled_status = con.execute(
+        "SELECT status FROM fact_game WHERE game_pk = 700002"
+    ).fetchone()
+    assert scheduled_status == ("Scheduled",)
+    assert table_counts(con)["fact_game"] == 2
+
+
+def test_fetch_schedule_is_idempotent(fake_client, con, settings):
+    ingest.fetch_schedule(fake_client, con, settings, "2026-07-01", "2026-07-01")
+    first = con.execute("SELECT count(*) FROM fact_game").fetchone()[0]
+
+    ingest.fetch_schedule(fake_client, con, settings, "2026-07-01", "2026-07-01")
+    second = con.execute("SELECT count(*) FROM fact_game").fetchone()[0]
+
+    assert first == second == 2

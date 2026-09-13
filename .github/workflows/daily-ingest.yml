@@ -63,12 +63,29 @@ jobs:
       - name: Build marts
         run: make build-marts
 
+
       - name: Download model artifact
         uses: actions/download-artifact@v4
         with:
           name: mlb-model
           path: data/models/
         continue-on-error: true
+
+      - name: Ingest
+        run: make ingest-date DATE=${{ steps.date.outputs.date }}
+
+      - name: Fetch upcoming schedule
+        run: |
+          python -m mlb_pipeline.cli fetch-schedule \
+            --start-date $(date -u -d 'tomorrow' +%F) \
+            --end-date $(date -u -d '+7 days' +%F)
+
+      - name: Predict upcoming games
+        run: python -m mlb_pipeline.cli predict --date $(date -u -d 'tomorrow' +%F)
+        continue-on-error: true
+
+      - name: Build marts
+        run: make build-marts
 
       - name: Predict
         run: python -m mlb_pipeline.cli predict --date ${{ steps.date.outputs.date }}

@@ -53,3 +53,22 @@ def ingest_date(client, con, settings: Settings, date_str: str) -> dict:
 
 def ingest_date_range(client, con, settings: Settings, start_date: str, end_date: str) -> list[dict]:
     return [ingest_date(client, con, settings, d) for d in date_range(start_date, end_date)]
+
+
+def fetch_schedule(client, con, settings: Settings, start_date: str, end_date: str) -> dict:
+    """Fetch the schedule for a date range and seed pre-game fact_game rows.
+
+    Idempotent via INSERT OR IGNORE: a game already loaded by ingest_date
+    (completed, with scores) is left untouched by this call.
+    """
+    schedule = client.get_schedule(start_date, end_date)
+    raw_store.save_raw(
+        schedule, raw_store.raw_path(settings.raw_dir, "schedule", f"{start_date}_{end_date}")
+    )
+
+    games = normalize.normalize_schedule_games(schedule)
+    teams = normalize.normalize_schedule_teams(schedule)
+    db.insert_ignore(con, "dim_team", teams)
+    db.insert_ignore(con, "fact_game", games)
+
+    return {"start_date": start_date, "end_date": end_date, "games_found": len(games)}

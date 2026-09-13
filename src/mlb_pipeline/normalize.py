@@ -74,6 +74,48 @@ def extract_game_pks(schedule: dict, only_final: bool = True) -> list[int]:
     return pks
 
 
+def normalize_schedule_games(schedule: dict) -> list[dict]:
+    """Pre-game fact_game rows from a schedule payload.
+
+    Only fields known before first pitch are populated; score columns are
+    left unset (NULL). Used to seed rows for games that have not yet been
+    ingested via feed/boxscore.
+    """
+    rows = []
+    for date_entry in schedule.get("dates", []):
+        for game in date_entry.get("games", []):
+            home = game["teams"]["home"]["team"]
+            away = game["teams"]["away"]["team"]
+            season = game.get("season")
+            rows.append(
+                {
+                    "game_pk": game["gamePk"],
+                    "official_date": game.get("officialDate"),
+                    "season": int(season) if season is not None else None,
+                    "game_type": game.get("gameType"),
+                    "status": "Scheduled",
+                    "home_team_id": home["id"],
+                    "away_team_id": away["id"],
+                }
+            )
+    return rows
+
+
+def normalize_schedule_teams(schedule: dict) -> list[dict]:
+    """Minimal dim_team rows (id + name only) from a schedule payload.
+
+    Lets scheduled games join to a team name before a full feed/boxscore
+    ingest has populated the richer dim_team columns.
+    """
+    teams = {}
+    for date_entry in schedule.get("dates", []):
+        for game in date_entry.get("games", []):
+            for side in ("home", "away"):
+                team = game["teams"][side]["team"]
+                teams[team["id"]] = {"team_id": team["id"], "name": team.get("name")}
+    return list(teams.values())
+
+
 def normalize_teams(feed: dict) -> list[dict]:
     """dim_team rows from a feed/live payload."""
     rows = []

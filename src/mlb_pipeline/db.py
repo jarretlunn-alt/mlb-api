@@ -62,3 +62,22 @@ def upsert(con: duckdb.DuckDBPyConnection, table: str, rows: list[dict]) -> int:
     )
     con.executemany(sql, [[row[c] for c in columns] for row in rows])
     return len(rows)
+
+
+def insert_ignore(con: duckdb.DuckDBPyConnection, table: str, rows: list[dict]) -> int:
+    """Idempotent load: INSERT OR IGNORE keyed on the table's primary key.
+
+    Unlike upsert(), an existing row is left untouched. Used for placeholder
+    data (e.g. scheduled games) that must never clobber a row already loaded
+    by a full ingest.
+    """
+    if not rows:
+        return 0
+    columns = list(rows[0].keys())
+    placeholders = ", ".join(["?"] * len(columns))
+    sql = (
+        f"INSERT OR IGNORE INTO {table} ({', '.join(columns)}) "
+        f"VALUES ({placeholders})"
+    )
+    con.executemany(sql, [[row[c] for c in columns] for row in rows])
+    return len(rows)

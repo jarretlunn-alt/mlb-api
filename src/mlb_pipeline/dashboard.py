@@ -39,6 +39,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 SECTIONS = [
     ("Upcoming Predictions", "upcoming", "SELECT * FROM mart_upcoming_predictions"),
     ("Predictions", "predictions", "SELECT * FROM mart_predictions"),
+    ("Upcoming Predictions", "upcoming_predictions", "SELECT * FROM mart_upcoming_predictions"),
     ("Games by Date", "games", "SELECT * FROM mart_games_by_date"),
     ("Team Records &amp; Runs", "records", "SELECT * FROM mart_team_records"),
     ("Top Hitters (by hits, HR, RBI)", "hitters", "SELECT * FROM mart_top_hitters LIMIT 15"),
@@ -80,6 +81,8 @@ def render_dashboard(con, site_dir: Path) -> Path:
             )
         elif section_id == "predictions":
             table_html = _render_predictions_section(con)
+        elif section_id == "upcoming_predictions":
+            table_html = _render_upcoming_predictions_section(con)
         else:
             try:
                 result = con.execute(query)
@@ -134,3 +137,24 @@ def _render_predictions_section(con) -> str:
         return _render_table(columns, rows)
     except Exception:
         return '<p class="empty">No predictions yet — run: python -m mlb_pipeline.cli predict</p>'
+
+
+def _render_upcoming_predictions_section(con) -> str:
+    empty = (
+        '<p class="empty">No upcoming predictions yet — run: '
+        "python -m mlb_pipeline.cli fetch-schedule and predict</p>"
+    )
+    try:
+        con.execute("SELECT 1 FROM fact_prediction LIMIT 1")
+    except Exception:
+        return empty
+
+    try:
+        result = con.execute("SELECT * FROM mart_upcoming_predictions")
+        columns = [d[0] for d in result.description]
+        rows = result.fetchall()
+        if not rows:
+            return empty
+        return _render_table(columns, rows)
+    except Exception:
+        return empty

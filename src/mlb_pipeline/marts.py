@@ -37,8 +37,8 @@ MART_VIEWS = {
         SELECT
             g.official_date AS game_date,
             g.game_pk,
-            tm_away.name AS away_team,
             tm_home.name AS home_team,
+            tm_away.name AS away_team,
             ROUND(p.home_win_prob * 100, 1) AS home_win_pct,
             ROUND(p.away_win_prob * 100, 1) AS away_win_pct,
             p.model_name
@@ -46,7 +46,7 @@ MART_VIEWS = {
         JOIN fact_game g ON g.game_pk = p.game_pk
         JOIN dim_team tm_home ON tm_home.team_id = g.home_team_id
         JOIN dim_team tm_away ON tm_away.team_id = g.away_team_id
-        WHERE g.status = 'Scheduled'
+        WHERE g.status = 'Scheduled' OR g.official_date > current_date
         ORDER BY g.official_date, g.game_pk
     """,
     "mart_games_by_date": """

@@ -21,6 +21,22 @@ class _FakeModel:
         self.tag = tag
 
 
+def test_build_parser_fetch_schedule():
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        ["fetch-schedule", "--start-date", "2026-09-14", "--end-date", "2026-09-20"]
+    )
+    assert args.command == "fetch-schedule"
+    assert args.start_date == "2026-09-14"
+    assert args.end_date == "2026-09-20"
+
+
+def test_build_parser_fetch_schedule_defaults_end_date():
+    parser = cli.build_parser()
+    args = parser.parse_args(["fetch-schedule", "--start-date", "2026-09-14"])
+    assert args.end_date is None
+
+
 def test_train_default_seasons(con, settings, monkeypatch, capsys):
     seen = {}
 

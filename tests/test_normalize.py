@@ -27,6 +27,42 @@ def test_normalize_game(feed_live):
     }
 
 
+def test_normalize_schedule_games(schedule):
+    rows = normalize.normalize_schedule_games(schedule)
+
+    assert rows == [
+        {
+            "game_pk": 700001,
+            "official_date": "2026-07-01",
+            "season": 2026,
+            "game_type": "R",
+            "status": "Scheduled",
+            "home_team_id": 136,
+            "away_team_id": 133,
+        },
+        {
+            "game_pk": 700002,
+            "official_date": "2026-07-01",
+            "season": 2026,
+            "game_type": "R",
+            "status": "Scheduled",
+            "home_team_id": 137,
+            "away_team_id": 119,
+        },
+    ]
+
+
+def test_normalize_schedule_teams(schedule):
+    teams = normalize.normalize_schedule_teams(schedule)
+
+    assert {t["team_id"]: t["name"] for t in teams} == {
+        133: "Athletics",
+        136: "Seattle Mariners",
+        119: "Los Angeles Dodgers",
+        137: "San Francisco Giants",
+    }
+
+
 def test_normalize_teams(feed_live):
     teams = normalize.normalize_teams(feed_live)
 

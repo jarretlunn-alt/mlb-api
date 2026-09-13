@@ -116,6 +116,14 @@ def main(argv=None) -> int:
             results = ingest.ingest_date_range(client, con, settings, args.start_date, end_date)
             for result in results:
                 print(f"{result['date']}: loaded {result['games_loaded']} completed game(s)")
+        elif args.command == "fetch-schedule":
+            client = MLBApiClient()
+            end_date = args.end_date or args.start_date
+            result = ingest.fetch_schedule(client, con, settings, args.start_date, end_date)
+            print(
+                f"{result['start_date']} to {result['end_date']}: "
+                f"found {result['games_found']} game(s) in schedule"
+            )
         elif args.command == "build-marts":
             paths = marts.export_parquet(con, settings.marts_dir)
             print(f"Exported {len(paths)} Parquet files to {settings.marts_dir}")
