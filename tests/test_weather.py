@@ -1,100 +1,214 @@
-import csv
-from pathlib import Path
+"""Tests for weather_client, parks, and ingest_weather — no network calls."""
+import math
 
+import duckdb
 import pytest
+import requests
 
-from mlb_pipeline import weather
-from mlb_pipeline.weather import get_weather_stub, weather_run_adjustment
-
-PARKS_CSV = Path(__file__).resolve().parents[1] / "data" / "parks.csv"
-
-
-def test_module_exports_both_functions():
-    assert callable(weather.get_weather_stub)
-    assert callable(weather.weather_run_adjustment)
+from mlb_pipeline import db, ingest_weather
+from mlb_pipeline.parks import PARKS, wind_out_mph
+from mlb_pipeline.weather_client import WeatherClient, _extract_hour, _hour_of
 
 
-def test_stub_returns_all_expected_keys():
-    result = get_weather_stub(700001, "2026-07-01")
-    assert isinstance(result, dict)
-    assert set(result) == {"temp_f", "wind_mph", "wind_dir", "precip_in", "humidity_pct"}
-    assert result["wind_dir"] == "calm"
-    assert result["temp_f"] == 72
+# ---------------------------------------------------------------------------
+# parks.wind_out_mph
+# ---------------------------------------------------------------------------
+
+def test_full_tailwind():
+    # park faces N (out_bearing=0); wind from S (180°) → full tailwind
+    result = wind_out_mph(wind_from_deg=180, wind_speed_mph=10, out_bearing_deg=0)
+    assert math.isclose(result, 10.0, abs_tol=0.01)
 
 
-def test_stub_weather_is_neutral():
-    assert weather_run_adjustment(get_weather_stub(700001, "2026-07-01")) == pytest.approx(1.0)
+def test_full_headwind():
+    # park faces N (out_bearing=0); wind from N (0°) → full headwind
+    result = wind_out_mph(wind_from_deg=0, wind_speed_mph=10, out_bearing_deg=0)
+    assert math.isclose(result, -10.0, abs_tol=0.01)
 
 
-def test_empty_dict_falls_back_to_neutral():
-    assert weather_run_adjustment({}) == pytest.approx(1.0)
+def test_crosswind_is_zero():
+    # park faces N; wind from E (90°) → pure crosswind, zero component
+    result = wind_out_mph(wind_from_deg=90, wind_speed_mph=10, out_bearing_deg=0)
+    assert math.isclose(result, 0.0, abs_tol=0.01)
 
 
-def test_cold_calm_suppresses_scoring():
-    # 52F is 20 degrees below neutral: 20 * -0.005 = -0.10
-    result = weather_run_adjustment({"temp_f": 52, "wind_mph": 0, "wind_dir": "calm"})
-    assert result == pytest.approx(0.90)
+def test_wrigley_south_wind_blows_out():
+    # Wrigley out_bearing ~75° (ENE); S wind (from 180°) has strong out component
+    park = PARKS[112]
+    result = wind_out_mph(180, 15, park["out_bearing_deg"])
+    assert result > 0  # blowing out (tailwind component)
 
 
-def test_hot_wind_out_boosts_scoring():
-    # 92F is 20 degrees above neutral: 20 * 0.003 = +0.06; wind out adds 5%
-    result = weather_run_adjustment({"temp_f": 92, "wind_mph": 15, "wind_dir": "out"})
-    assert result == pytest.approx(1.06 * 1.05)
+def test_all_parks_have_required_keys():
+    for team_id, park in PARKS.items():
+        assert "lat" in park, f"team {team_id} missing lat"
+        assert "lon" in park, f"team {team_id} missing lon"
+        assert "timezone" in park, f"team {team_id} missing timezone"
+        assert "out_bearing_deg" in park, f"team {team_id} missing out_bearing_deg"
 
 
-def test_wind_in_reduces_scoring():
-    result = weather_run_adjustment({"temp_f": 72, "wind_mph": 12, "wind_dir": "in"})
-    assert result == pytest.approx(0.95)
+# ---------------------------------------------------------------------------
+# weather_client internals
+# ---------------------------------------------------------------------------
+
+def _make_payload(hours=None, include_precip=False):
+    hours = hours or ["2024-04-15T19:00", "2024-04-15T20:00"]
+    h = {
+        "time":               hours,
+        "temperature_2m":     [65.0, 66.0][:len(hours)],
+        "windspeed_10m":      [12.0, 13.0][:len(hours)],
+        "winddirection_10m":  [180,  185 ][:len(hours)],
+    }
+    if include_precip:
+        h["precipitation_probability"] = [20, 30][:len(hours)]
+    return {"hourly": h}
 
 
-def test_light_wind_is_ignored():
-    result = weather_run_adjustment({"temp_f": 72, "wind_mph": 9, "wind_dir": "out"})
-    assert result == pytest.approx(1.0)
+def test_extract_hour_picks_closest():
+    payload = _make_payload(["2024-04-15T18:00", "2024-04-15T19:00", "2024-04-15T20:00"],
+                             include_precip=True)
+    payload["hourly"]["temperature_2m"] = [60.0, 65.0, 70.0]
+    payload["hourly"]["windspeed_10m"]  = [10.0, 12.0, 14.0]
+    payload["hourly"]["winddirection_10m"] = [170, 180, 190]
+    payload["hourly"]["precipitation_probability"] = [10, 20, 30]
+    result = _extract_hour(payload, local_hour=19, is_archive=False)
+    assert result["temp_f"] == 65.0
+    assert result["wind_mph"] == 12.0
+    assert result["precip_prob"] == pytest.approx(0.20)
 
 
-def test_temperature_effect_is_capped():
-    # 32F would be -0.20 uncapped; temperature component caps at -0.10
-    assert weather_run_adjustment({"temp_f": 32, "wind_mph": 0, "wind_dir": "calm"}) == pytest.approx(0.90)
-    # 120F would be +0.144 uncapped; caps at +0.10
-    assert weather_run_adjustment({"temp_f": 120, "wind_mph": 0, "wind_dir": "calm"}) == pytest.approx(1.10)
+def test_extract_hour_archive_no_precip_prob():
+    payload = _make_payload()
+    result = _extract_hour(payload, local_hour=19, is_archive=True)
+    assert result["precip_prob"] == 0.0
 
 
-def test_total_adjustment_capped_at_upper_bound():
-    # 1.10 * 1.05 = 1.155 -> clamped to 1.15
-    result = weather_run_adjustment({"temp_f": 120, "wind_mph": 30, "wind_dir": "out"})
-    assert result == pytest.approx(1.15)
+def test_hour_of_parses_correctly():
+    assert _hour_of("2024-04-15T19:00") == 19
+    assert _hour_of("2024-04-15T07:00") == 7
 
 
-def test_total_adjustment_never_below_lower_bound():
-    # 0.90 * 0.95 = 0.855 is the model minimum; the 0.85 clamp is a guard
-    result = weather_run_adjustment({"temp_f": -40, "wind_mph": 40, "wind_dir": "in"})
-    assert result >= 0.85
-    assert result == pytest.approx(0.855)
+# ---------------------------------------------------------------------------
+# WeatherClient with stub session
+# ---------------------------------------------------------------------------
+
+class StubResponse:
+    def __init__(self, payload):
+        self._payload = payload
+        self.status_code = 200
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        pass
 
 
-@pytest.mark.parametrize(
-    "w",
-    [
-        {"temp_f": -100, "wind_mph": 99, "wind_dir": "in"},
-        {"temp_f": 200, "wind_mph": 99, "wind_dir": "out"},
-        {"temp_f": 72, "wind_mph": 0, "wind_dir": "calm"},
-        {"temp_f": 45, "wind_mph": 20, "wind_dir": "cross"},
-    ],
-)
-def test_result_is_float_within_bounds(w):
-    result = weather_run_adjustment(w)
-    assert isinstance(result, float)
-    assert 0.85 <= result <= 1.15
+class StubSession:
+    def __init__(self, payload):
+        self._payload = payload
+        self.requests = []
+
+    def get(self, url, params=None, timeout=None):
+        self.requests.append({"url": url, "params": params})
+        return StubResponse(self._payload)
+
+    def mount(self, *a, **kw):
+        pass
 
 
-def test_parks_csv_has_30_teams():
-    with PARKS_CSV.open(encoding="utf-8", newline="") as f:
-        rows = list(csv.DictReader(line for line in f if not line.startswith("#")))
-    assert len(rows) == 30
-    assert list(rows[0]) == ["park_id", "name", "team_id", "team_name", "run_factor", "hr_factor", "handedness"]
-    assert len({r["team_id"] for r in rows}) == 30
-    assert len({r["park_id"] for r in rows}) == 30
-    for r in rows:
-        assert 0.8 <= float(r["run_factor"]) <= 1.2
-        assert 0.8 <= float(r["hr_factor"]) <= 1.2
-        assert r["handedness"] in {"rhb", "lhb", "neutral"}
+def _make_open_meteo_payload(temp=68.0, wind_mph=10.0, wind_deg=180, precip=25):
+    return {
+        "hourly": {
+            "time":               ["2024-04-15T19:00"],
+            "temperature_2m":     [temp],
+            "windspeed_10m":      [wind_mph],
+            "winddirection_10m":  [wind_deg],
+            "precipitation_probability": [precip],
+        }
+    }
+
+
+def test_weather_client_returns_dict():
+    session = StubSession(_make_open_meteo_payload())
+    client = WeatherClient(session=session)
+    result = client.get_weather(41.948, -87.655, "2024-04-15", timezone="America/Chicago")
+    assert "temp_f" in result
+    assert "wind_mph" in result
+    assert "wind_deg" in result
+    assert "precip_prob" in result
+
+
+def test_weather_client_uses_archive_for_old_dates():
+    session = StubSession(_make_open_meteo_payload())
+    client = WeatherClient(session=session)
+    client.get_weather(41.948, -87.655, "2023-06-01", timezone="America/Chicago")
+    assert "archive-api" in session.requests[0]["url"]
+
+
+def test_weather_client_uses_forecast_for_future():
+    import datetime as dt
+    future = (dt.date.today() + dt.timedelta(days=2)).isoformat()
+    session = StubSession(_make_open_meteo_payload())
+    client = WeatherClient(session=session)
+    client.get_weather(41.948, -87.655, future, timezone="America/Chicago")
+    assert "forecast" in session.requests[0]["url"]
+
+
+# ---------------------------------------------------------------------------
+# ingest_weather
+# ---------------------------------------------------------------------------
+
+GAME_PK = 700001
+HOME_ID  = 112   # Cubs → Wrigley Field
+
+
+@pytest.fixture
+def mem():
+    con = duckdb.connect(":memory:")
+    db.init_schema(con)
+    con.execute(
+        "INSERT INTO fact_game VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [GAME_PK, "2024-04-15", 2024, "R", "Final", "Wrigley Field",
+         HOME_ID, 111, 3, 2, HOME_ID],
+    )
+    yield con
+    con.close()
+
+
+class StubWeatherClient:
+    def get_weather(self, lat, lon, game_date, local_hour=19, timezone="UTC"):
+        return {"temp_f": 68.0, "wind_mph": 12.0, "wind_deg": 180, "precip_prob": 0.2}
+
+
+def test_ingest_weather_for_date_inserts_row(mem):
+    result = ingest_weather.ingest_weather_for_date(StubWeatherClient(), mem, "2024-04-15")
+    assert result["games_loaded"] == 1
+    row = mem.execute("SELECT temp_f, wind_out_mph FROM fact_game_weather WHERE game_pk = ?",
+                      [GAME_PK]).fetchone()
+    assert row is not None
+    assert row[0] == pytest.approx(68.0)
+    # wind from S (180°), Wrigley out_bearing=75° → blowing out
+    assert row[1] > 0
+
+
+def test_ingest_weather_for_date_no_games(mem):
+    result = ingest_weather.ingest_weather_for_date(StubWeatherClient(), mem, "2024-04-16")
+    assert result["games_loaded"] == 0
+
+
+def test_ingest_weather_range(mem):
+    result = ingest_weather.ingest_weather_range(StubWeatherClient(), mem, "2024-04-15", "2024-04-15")
+    assert result["days_processed"] == 1
+    assert result["games_loaded"] == 1
+
+
+def test_ingest_weather_unknown_park_skipped(mem):
+    # Insert a game with a team_id not in PARKS
+    mem.execute(
+        "INSERT INTO fact_game VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [700002, "2024-04-15", 2024, "R", "Final", "Unknown Park", 9999, 111, 3, 2, 9999],
+    )
+    result = ingest_weather.ingest_weather_for_date(StubWeatherClient(), mem, "2024-04-15")
+    # team 9999 skipped, team 112 loaded
+    assert result["games_loaded"] == 1

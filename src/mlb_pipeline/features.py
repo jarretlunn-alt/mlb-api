@@ -436,6 +436,13 @@ def build_game_feature_row(
     if odds is not None:
         row.update(odds)
 
+    # Weather (optional — None when fact_game_weather has no row for this game).
+    # To activate as model features: add "temp_f", "wind_out_mph" to ensemble.FEATURE_NAMES
+    # and raw.get(...) to _feature_row() once weather is backfilled.
+    weather = game_weather_features(con, game_pk)
+    if weather is not None:
+        row.update(weather)
+
     home_score, away_score = con.execute(
         "SELECT home_score, away_score FROM fact_game WHERE game_pk = ?", [game_pk]
     ).fetchone()
@@ -485,6 +492,27 @@ def game_odds_features(con, game_pk: int) -> dict | None:
     if row is None:
         return None
     return {"line_home_win_prob": _vig_free_prob(row[0], row[1])}
+
+
+def game_weather_features(con, game_pk: int) -> dict | None:
+    """Weather conditions from fact_game_weather, or None if not yet fetched.
+
+    Returns {'temp_f', 'wind_mph', 'wind_out_mph', 'precip_prob'}.
+    wind_out_mph is already direction-adjusted (positive = tailwind toward CF).
+    """
+    row = con.execute(
+        "SELECT temp_f, wind_mph, wind_out_mph, precip_prob "
+        "FROM fact_game_weather WHERE game_pk = ?",
+        [game_pk],
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "temp_f":       row[0],
+        "wind_mph":     row[1],
+        "wind_out_mph": row[2],
+        "precip_prob":  row[3],
+    }
 
 
 def feature_row_keys(n_starts_prefixes=("home", "away")) -> list[str]:

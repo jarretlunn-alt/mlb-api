@@ -128,6 +128,19 @@ CREATE TABLE IF NOT EXISTS dim_park (
     handedness     VARCHAR   -- 'neutral', 'rhb', 'lhb'
 );
 
+-- Pre-game weather at the park, fetched from Open-Meteo (no API key required).
+-- wind_out_mph: component of wind blowing toward the outfield (+ve = tailwind,
+--   hitter-friendly; 0 for domes).
+CREATE TABLE IF NOT EXISTS fact_game_weather (
+    game_pk      BIGINT PRIMARY KEY,
+    temp_f       DOUBLE,
+    wind_mph     DOUBLE,
+    wind_deg     INTEGER,
+    wind_out_mph DOUBLE,
+    precip_prob  DOUBLE,
+    fetched_at   TIMESTAMP
+);
+
 -- Opening moneylines from The Odds API, one row per (game, sportsbook).
 -- Primary key preserves the first line observed; INSERT OR REPLACE updates it
 -- if a better line is fetched later.  home_ml and away_ml are American-format
