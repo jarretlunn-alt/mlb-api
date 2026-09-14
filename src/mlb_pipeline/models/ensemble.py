@@ -23,8 +23,20 @@ FEATURE_NAMES = (
     "elo_home_rating", "elo_away_rating", "poisson_lambda_home",
     "poisson_lambda_away", "home_runs_per_game_15d", "away_runs_allowed_15d",
     "home_park_factor", "is_dome",
+    "home_sp_fip", "away_sp_fip",
 )
 SEASON_ERROR = "Need at least 2 seasons of data to train. Run make ingest-date for more dates."
+
+# League-average starter FIP used when a pitcher's stats are missing.
+LEAGUE_AVG_FIP = 3.90
+
+# Long-run MLB home-team win rate; used to damp the Poisson fallback.
+LEAGUE_AVG_HOME_WIN = 0.54
+
+# Weight blended toward LEAGUE_AVG_HOME_WIN when the full feature row is
+# unavailable (early-season games with insufficient rolling history).
+# 0.30 preserves Poisson direction while pulling extremes back ~5 pp.
+FALLBACK_BLEND = 0.30
 
 
 def _complete_seasons(con):
@@ -76,10 +88,15 @@ def _feature_row(con, game_pk, home_id, away_id, as_of_date, ratings=None):
     ratings = _ratings(con, as_of_date) if ratings is None else ratings
     pois = _poisson_prediction(con, game_pk, home_id, away_id, as_of_date)
     # Explicit allowlist excludes score, win, total_runs, and identifier columns.
+    # sp_fip: use LEAGUE_AVG_FIP when pitcher stats are unavailable (opener game, etc.)
+    home_fip = raw.get("home_sp_fip_last_n")
+    away_fip = raw.get("away_sp_fip_last_n")
     values = [ratings.get(home_id, 1500.0), ratings.get(away_id, 1500.0),
               pois.features["lam_home"], pois.features["lam_away"],
               raw.get("home_runs_per_game"), raw.get("away_runs_allowed_per_game"),
-              raw.get("park_run_factor", 1.0), raw.get("is_dome", 0.0)]
+              raw.get("park_run_factor", 1.0), raw.get("is_dome", 0.0),
+              home_fip if home_fip is not None else LEAGUE_AVG_FIP,
+              away_fip if away_fip is not None else LEAGUE_AVG_FIP]
     if any(v is None for v in values):
         return None
     row = np.asarray(values, dtype=float)
@@ -139,12 +156,19 @@ def train(con, seasons: list[int]) -> CalibratedClassifierCV:
 
 def predict(model, con, game_pk: int, home_id: int, away_id: int,
             as_of_date: str) -> GamePrediction:
-    """Return calibrated home probability; missing inputs use Poisson fallback."""
+    """Return calibrated home probability; missing inputs use blended Poisson fallback."""
     row = _feature_row(con, game_pk, home_id, away_id, as_of_date)
     if row is None:
         base = _poisson_prediction(con, game_pk, home_id, away_id, as_of_date)
-        return GamePrediction(game_pk, "ensemble", base.home_win_prob, base.away_win_prob,
-                              base.pred_total, {**base.features, "ensemble_fallback": "missing features"})
+        # Blend raw Poisson toward the long-run home-win rate to damp early-season
+        # overconfidence when rolling history is insufficient for a full feature row.
+        raw_p = base.home_win_prob
+        blended_p = raw_p * (1.0 - FALLBACK_BLEND) + LEAGUE_AVG_HOME_WIN * FALLBACK_BLEND
+        return GamePrediction(game_pk, "ensemble", blended_p, 1.0 - blended_p,
+                              base.pred_total, {**base.features,
+                                                "ensemble_fallback": "missing features",
+                                                "fallback_blend": FALLBACK_BLEND,
+                                                "raw_poisson_home": raw_p})
     home = float(model.predict_proba(row.reshape(1, -1))[0, 1])
     return GamePrediction(game_pk, "ensemble", home, 1.0 - home, float(row[2] + row[3]),
                           dict(zip(FEATURE_NAMES, row.tolist())))

@@ -40,14 +40,14 @@ def warehouse(monkeypatch):
 def test_training_shape_and_skips(warehouse, monkeypatch):
     con, seasons = warehouse
     X, y = ensemble.build_training_set(con, seasons)
-    assert X.shape == (50, 8)
+    assert X.shape == (50, len(ensemble.FEATURE_NAMES))
     assert y.shape == (50,)
     assert set(y) == {0, 1}
     assert np.isfinite(X).all()
     assert 99 not in X  # Outcomes are never included in X.
     monkeypatch.setattr(ensemble, "_features", SimpleNamespace(build_game_feature_row=lambda *a: None))
     X, y = ensemble.build_training_set(con, seasons)
-    assert X.shape == (0, 8)
+    assert X.shape == (0, len(ensemble.FEATURE_NAMES))
     assert y.shape == (0,)
 
 
@@ -102,12 +102,59 @@ def test_elo_uses_previous_day_and_real_poisson_interface(warehouse, monkeypatch
     np.testing.assert_array_equal(X[0, :4], [1600, 1400, 5, 3])
 
 
-def test_missing_features_prediction_is_explicit_fallback(warehouse, monkeypatch):
+def test_missing_features_prediction_is_blended_fallback(warehouse, monkeypatch):
     con, seasons = warehouse
     monkeypatch.setattr(ensemble, "_features", SimpleNamespace(build_game_feature_row=lambda *a: None))
+    # Poisson mock returns 0.5 home win prob; blend pulls it toward LEAGUE_AVG_HOME_WIN (0.54).
     pred = ensemble.predict(None, con, 1, 1, 2, f"{seasons[0]}-06-02")
-    assert pred.home_win_prob == 0.5
+    expected = 0.5 * (1 - ensemble.FALLBACK_BLEND) + ensemble.LEAGUE_AVG_HOME_WIN * ensemble.FALLBACK_BLEND
+    assert pred.home_win_prob == pytest.approx(expected)
+    assert pred.home_win_prob + pred.away_win_prob == pytest.approx(1.0)
     assert pred.features["ensemble_fallback"] == "missing features"
+    assert pred.features["fallback_blend"] == ensemble.FALLBACK_BLEND
+    assert pred.features["raw_poisson_home"] == pytest.approx(0.5)
+
+
+def test_fallback_blend_damps_extreme_poisson(warehouse, monkeypatch):
+    con, seasons = warehouse
+    monkeypatch.setattr(ensemble, "_features", SimpleNamespace(build_game_feature_row=lambda *a: None))
+    # Override Poisson to return an extreme prediction (0.75 home win prob).
+    monkeypatch.setattr(ensemble, "_poisson", SimpleNamespace(predict=lambda *a:
+        ensemble.GamePrediction(a[1], "poisson", 0.75, 0.25, 9.0,
+                                {"lam_home": 5.5, "lam_away": 3.0})))
+    pred = ensemble.predict(None, con, 1, 1, 2, f"{seasons[0]}-06-02")
+    expected = 0.75 * (1 - ensemble.FALLBACK_BLEND) + ensemble.LEAGUE_AVG_HOME_WIN * ensemble.FALLBACK_BLEND
+    assert pred.home_win_prob == pytest.approx(expected)
+    assert pred.home_win_prob < 0.75  # definitely damped toward league average
+
+
+def test_sp_fip_extracted_from_feature_row(warehouse, monkeypatch):
+    con, seasons = warehouse
+    home_fip, away_fip = 3.15, 4.40
+    monkeypatch.setattr(ensemble, "_features", SimpleNamespace(build_game_feature_row=
+        lambda con, pk, day: {"home_runs_per_game": 4.5,
+                              "away_runs_allowed_per_game": 4.0,
+                              "park_run_factor": 1.0, "is_dome": 0.0,
+                              "home_sp_fip_last_n": home_fip,
+                              "away_sp_fip_last_n": away_fip}))
+    X, _ = ensemble.build_training_set(con, seasons[:1])
+    fip_col_home = list(ensemble.FEATURE_NAMES).index("home_sp_fip")
+    fip_col_away = list(ensemble.FEATURE_NAMES).index("away_sp_fip")
+    assert X[0, fip_col_home] == pytest.approx(home_fip)
+    assert X[0, fip_col_away] == pytest.approx(away_fip)
+
+
+def test_sp_fip_falls_back_to_league_average_when_missing(warehouse, monkeypatch):
+    con, seasons = warehouse
+    # Raw dict has no sp_fip keys — should use LEAGUE_AVG_FIP, not None-out the row.
+    monkeypatch.setattr(ensemble, "_features", SimpleNamespace(build_game_feature_row=
+        lambda con, pk, day: {"home_runs_per_game": 4.5,
+                              "away_runs_allowed_per_game": 4.0,
+                              "park_run_factor": 1.0, "is_dome": 0.0}))
+    X, _ = ensemble.build_training_set(con, seasons[:1])
+    assert X.shape[0] == 25  # no rows dropped due to missing sp_fip
+    fip_col_home = list(ensemble.FEATURE_NAMES).index("home_sp_fip")
+    assert X[0, fip_col_home] == pytest.approx(ensemble.LEAGUE_AVG_FIP)
 
 
 def test_main_runs_three_comparisons(warehouse, monkeypatch, tmp_path, capsys):
