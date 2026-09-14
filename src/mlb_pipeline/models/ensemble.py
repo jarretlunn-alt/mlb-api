@@ -27,6 +27,7 @@ FEATURE_NAMES = (
     "home_runs_allowed_per_game", "away_runs_per_game",
     "home_bullpen_fip", "away_bullpen_fip",
     "home_sp_k_per_9", "away_sp_k_per_9",
+    "temp_f", "wind_out_mph",
 )
 SEASON_ERROR = "Need at least 2 seasons of data to train. Run make ingest-date for more dates."
 
@@ -93,7 +94,8 @@ def _feature_row(con, game_pk, home_id, away_id, as_of_date, ratings=None):
               raw.get("home_sp_fip_last_n"), raw.get("away_sp_fip_last_n"),
               raw.get("home_runs_allowed_per_game"), raw.get("away_runs_per_game"),
               raw.get("home_bullpen_fip"), raw.get("away_bullpen_fip"),
-              raw.get("home_sp_k_per_9"), raw.get("away_sp_k_per_9")]
+              raw.get("home_sp_k_per_9"), raw.get("away_sp_k_per_9"),
+              raw.get("temp_f", 70.0), raw.get("wind_out_mph", 0.0)]
     if any(v is None for v in values):
         return None
     row = np.asarray(values, dtype=float)
