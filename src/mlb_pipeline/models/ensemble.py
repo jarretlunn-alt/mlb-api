@@ -24,8 +24,17 @@ FEATURE_NAMES = (
     "poisson_lambda_away", "home_runs_per_game_15d", "away_runs_allowed_15d",
     "home_park_factor", "is_dome",
     "home_sp_fip_last_n", "away_sp_fip_last_n",
+    "home_runs_allowed_per_game", "away_runs_per_game",
+    "home_bullpen_fip", "away_bullpen_fip",
+    "home_sp_k_per_9", "away_sp_k_per_9",
 )
 SEASON_ERROR = "Need at least 2 seasons of data to train. Run make ingest-date for more dates."
+
+# When _feature_row() returns None (~9% of 2025 games), predict() falls back to
+# the raw Poisson model. Poisson is uncalibrated and can emit extremes like
+# 0.03/0.97; blending toward the historical MLB home win rate moderates these.
+_FALLBACK_HOME_PRIOR = 0.54
+_FALLBACK_BLEND_WEIGHT = 0.5
 
 
 def _complete_seasons(con):
@@ -81,7 +90,10 @@ def _feature_row(con, game_pk, home_id, away_id, as_of_date, ratings=None):
               pois.features["lam_home"], pois.features["lam_away"],
               raw.get("home_runs_per_game"), raw.get("away_runs_allowed_per_game"),
               raw.get("park_run_factor", 1.0), raw.get("is_dome", 0.0),
-              raw.get("home_sp_fip_last_n"), raw.get("away_sp_fip_last_n")]
+              raw.get("home_sp_fip_last_n"), raw.get("away_sp_fip_last_n"),
+              raw.get("home_runs_allowed_per_game"), raw.get("away_runs_per_game"),
+              raw.get("home_bullpen_fip"), raw.get("away_bullpen_fip"),
+              raw.get("home_sp_k_per_9"), raw.get("away_sp_k_per_9")]
     if any(v is None for v in values):
         return None
     row = np.asarray(values, dtype=float)
@@ -145,7 +157,8 @@ def predict(model, con, game_pk: int, home_id: int, away_id: int,
     row = _feature_row(con, game_pk, home_id, away_id, as_of_date)
     if row is None:
         base = _poisson_prediction(con, game_pk, home_id, away_id, as_of_date)
-        return GamePrediction(game_pk, "ensemble", base.home_win_prob, base.away_win_prob,
+        blended = (1 - _FALLBACK_BLEND_WEIGHT) * base.home_win_prob + _FALLBACK_BLEND_WEIGHT * _FALLBACK_HOME_PRIOR
+        return GamePrediction(game_pk, "ensemble", blended, 1.0 - blended,
                               base.pred_total, {**base.features, "ensemble_fallback": "missing features"})
     home = float(model.predict_proba(row.reshape(1, -1))[0, 1])
     return GamePrediction(game_pk, "ensemble", home, 1.0 - home, float(row[2] + row[3]),

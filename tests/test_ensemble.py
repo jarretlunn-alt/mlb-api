@@ -27,6 +27,9 @@ def warehouse(monkeypatch):
                              "away_runs_allowed_per_game": 3 + (pk % 2),
                              "park_run_factor": 1.02, "is_dome": True,
                              "home_sp_fip_last_n": 3.5, "away_sp_fip_last_n": 4.0,
+                             "home_runs_allowed_per_game": 4.2, "away_runs_per_game": 3.8,
+                             "home_bullpen_fip": 3.9, "away_bullpen_fip": 4.1,
+                             "home_sp_k_per_9": 8.5, "away_sp_k_per_9": 7.9,
                              "home_score": 99, "home_win": True}))
     monkeypatch.setattr(ensemble, "_elo", SimpleNamespace(
         build_ratings_from_history=lambda con, day: {},
@@ -41,14 +44,14 @@ def warehouse(monkeypatch):
 def test_training_shape_and_skips(warehouse, monkeypatch):
     con, seasons = warehouse
     X, y = ensemble.build_training_set(con, seasons)
-    assert X.shape == (50, 10)
+    assert X.shape == (50, len(ensemble.FEATURE_NAMES))
     assert y.shape == (50,)
     assert set(y) == {0, 1}
     assert np.isfinite(X).all()
     assert 99 not in X  # Outcomes are never included in X.
     monkeypatch.setattr(ensemble, "_features", SimpleNamespace(build_game_feature_row=lambda *a: None))
     X, y = ensemble.build_training_set(con, seasons)
-    assert X.shape == (0, 10)
+    assert X.shape == (0, len(ensemble.FEATURE_NAMES))
     assert y.shape == (0,)
 
 
@@ -106,8 +109,11 @@ def test_elo_uses_previous_day_and_real_poisson_interface(warehouse, monkeypatch
 def test_missing_features_prediction_is_explicit_fallback(warehouse, monkeypatch):
     con, seasons = warehouse
     monkeypatch.setattr(ensemble, "_features", SimpleNamespace(build_game_feature_row=lambda *a: None))
+    # Poisson mock returns 0.5; blended toward _FALLBACK_HOME_PRIOR
     pred = ensemble.predict(None, con, 1, 1, 2, f"{seasons[0]}-06-02")
-    assert pred.home_win_prob == 0.5
+    expected = (1 - ensemble._FALLBACK_BLEND_WEIGHT) * 0.5 + ensemble._FALLBACK_BLEND_WEIGHT * ensemble._FALLBACK_HOME_PRIOR
+    assert pred.home_win_prob == pytest.approx(expected)
+    assert pred.home_win_prob + pred.away_win_prob == pytest.approx(1)
     assert pred.features["ensemble_fallback"] == "missing features"
 
 
