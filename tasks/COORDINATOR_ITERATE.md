@@ -16,15 +16,37 @@ Each worker phase is assigned to the LLM best suited to it. Alternating the
 gap-analysis worker between Claude and Codex across iterations deliberately
 generates different analytical perspectives and feature hypotheses.
 
-| Phase | Model | Reason |
-|-------|-------|--------|
-| `iter-backtest` | `claude` | Heavy SQL + metric reasoning; calibration analysis |
-| `iter-gap-analysis` | Odd iterations → `codex`, Even iterations → `claude` | Rotates perspective; Codex tends toward pattern/code-search, Claude toward statistical reasoning |
-| `iter-implement` | `codex` | Codex generates precise, concise Python; fewer hallucinated function names |
-| `iter-evaluate` | `claude` | Decision logic, nuanced comparison, commit message writing |
+| Phase | Model flag | Effort | Reason |
+|-------|-----------|--------|--------|
+| `iter-backtest` | `--model claude` | high | Heavy SQL + metric reasoning; calibration analysis |
+| `iter-gap-analysis` | Odd → `--model codex`, Even → `--model claude` | medium | Rotates perspective; Codex hunts code/pattern signals, Claude reasons statistically |
+| `iter-implement` | `--model codex` | medium | Precise Python generation; fewer hallucinated function names |
+| `iter-evaluate` | `--model claude` | high | Decision logic, nuanced comparison, commit messages |
 
-Pass `--model <name>` on every `worker-start` call. If the Orca CLI uses a
-different flag (e.g. `--agent`, `--llm`), substitute accordingly.
+`--effort` is supported by Orca but valid level names are not documented in the
+CLI help. Check `orca skills get` or Orca's changelog for the accepted values
+(likely `low / medium / high` or similar). Add `--effort <level>` to each
+`worker-start` call once you confirm the accepted values.
+
+**On local LLMs:** Orca's `--model` flag currently accepts only Claude, Codex,
+and Cursor provider IDs — there is no native local-model slot. To route through
+a local LLM (Ollama, LM Studio, vLLM):
+1. Run a local inference server exposing an OpenAI-compatible API
+   (e.g. `ollama serve`, `lms server start`)
+2. Use `litellm` as a shim in front of it
+3. Set `ANTHROPIC_BASE_URL=http://localhost:4000` before launching Orca so that
+   Claude Code's HTTP client hits your proxy instead of Anthropic's servers
+4. The `--model claude` flag still tells Orca to use a Claude-style agent, but
+   actual inference runs on your GPU
+
+Good local models for each phase (if running this way):
+- **iter-backtest / iter-evaluate** (reasoning-heavy): `qwen2.5:32b`, `deepseek-r1:32b`, `llama3.1:70b`
+- **iter-gap-analysis** (pattern analysis): `qwen2.5:14b`, `mistral:7b` for fast/cheap
+- **iter-implement** (code generation): `qwen2.5-coder:32b` is the strongest local code model as of 2025
+
+Note: local models that can't follow Claude's tool-use format reliably will cause
+`worker_done` signal parsing to fail. Test with a simple task before running the
+full 8-iteration loop.
 
 ---
 
