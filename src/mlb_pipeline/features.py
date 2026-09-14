@@ -429,6 +429,13 @@ def build_game_feature_row(
         row.update({f"{side}_sp_{k}": v for k, v in sp.items()})
         row.update({f"{side}_{k}": v for k, v in team.items()})
 
+    # Opening line (optional — None when fact_game_odds has no row for this game).
+    # To activate as a model feature: add "line_home_win_prob" to ensemble.FEATURE_NAMES
+    # and raw.get("line_home_win_prob") to _feature_row() once odds are backfilled.
+    odds = game_odds_features(con, game_pk)
+    if odds is not None:
+        row.update(odds)
+
     home_score, away_score = con.execute(
         "SELECT home_score, away_score FROM fact_game WHERE game_pk = ?", [game_pk]
     ).fetchone()
@@ -438,6 +445,46 @@ def build_game_feature_row(
         row["total_runs"] = home_score + away_score
         row["home_win"] = home_score > away_score
     return row
+
+
+def _vig_free_prob(home_ml: int, away_ml: int) -> float:
+    """Remove the bookmaker vig and return the fair home win probability.
+
+    Converts American moneylines to implied probabilities then normalises so
+    the two sides sum to 1.0.  Works for favourites (negative) and underdogs
+    (positive).
+    """
+    def implied(ml: int) -> float:
+        return abs(ml) / (abs(ml) + 100) if ml < 0 else 100 / (ml + 100)
+    p_h, p_a = implied(home_ml), implied(away_ml)
+    return p_h / (p_h + p_a)
+
+
+def game_odds_features(con, game_pk: int) -> dict | None:
+    """Vig-free opening line probability from fact_game_odds.
+
+    Returns {'line_home_win_prob': float} using the sharpest available
+    bookmaker (Pinnacle preferred), or None if no odds are stored for this
+    game.
+    """
+    row = con.execute(
+        """
+        SELECT home_ml, away_ml
+        FROM fact_game_odds
+        WHERE game_pk = ?
+        ORDER BY CASE sportsbook
+            WHEN 'pinnacle'   THEN 0
+            WHEN 'draftkings' THEN 1
+            WHEN 'fanduel'    THEN 2
+            ELSE 3
+        END
+        LIMIT 1
+        """,
+        [game_pk],
+    ).fetchone()
+    if row is None:
+        return None
+    return {"line_home_win_prob": _vig_free_prob(row[0], row[1])}
 
 
 def feature_row_keys(n_starts_prefixes=("home", "away")) -> list[str]:

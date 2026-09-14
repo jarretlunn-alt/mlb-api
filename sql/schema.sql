@@ -128,6 +128,19 @@ CREATE TABLE IF NOT EXISTS dim_park (
     handedness     VARCHAR   -- 'neutral', 'rhb', 'lhb'
 );
 
+-- Opening moneylines from The Odds API, one row per (game, sportsbook).
+-- Primary key preserves the first line observed; INSERT OR REPLACE updates it
+-- if a better line is fetched later.  home_ml and away_ml are American-format
+-- integers (negative = favourite, e.g. -145).
+CREATE TABLE IF NOT EXISTS fact_game_odds (
+    game_pk      BIGINT,
+    sportsbook   VARCHAR,
+    home_ml      INTEGER,
+    away_ml      INTEGER,
+    recorded_at  TIMESTAMP,
+    PRIMARY KEY (game_pk, sportsbook)
+);
+
 -- Model outputs, one row per (model, game).
 CREATE TABLE IF NOT EXISTS fact_prediction (
     prediction_id  VARCHAR PRIMARY KEY,  -- "{model_name}_{game_pk}"

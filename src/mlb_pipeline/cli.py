@@ -8,7 +8,7 @@ import pickle
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import dashboard, db, ingest, marts, predict as predict_module, schedule
+from . import dashboard, db, ingest, ingest_odds, marts, predict as predict_module, schedule
 from .api_client import MLBApiClient
 from .config import Settings
 from .models import ensemble
@@ -37,6 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_fetch.add_argument("--start-date", required=True, help="YYYY-MM-DD")
     p_fetch.add_argument("--end-date", help="YYYY-MM-DD (defaults to start date)")
+
+    p_odds = sub.add_parser("ingest-odds", help="Fetch opening lines from The Odds API (requires ODDS_API_KEY)")
+    p_odds.add_argument("--start-date", help="YYYY-MM-DD — backfill from this date (requires paid plan)")
+    p_odds.add_argument("--end-date", help="YYYY-MM-DD — backfill end date (defaults to start-date)")
 
     p_train = sub.add_parser("train", help="Train the XGBoost ensemble model and save it to disk")
     p_train.add_argument("--seasons", type=int, nargs="+", default=None,
@@ -116,14 +120,23 @@ def main(argv=None) -> int:
             results = ingest.ingest_date_range(client, con, settings, args.start_date, end_date)
             for result in results:
                 print(f"{result['date']}: loaded {result['games_loaded']} completed game(s)")
-        elif args.command == "fetch-schedule":
-            client = MLBApiClient()
-            end_date = args.end_date or args.start_date
-            result = ingest.fetch_schedule(client, con, settings, args.start_date, end_date)
-            print(
-                f"{result['start_date']} to {result['end_date']}: "
-                f"found {result['games_found']} game(s) in schedule"
-            )
+        elif args.command == "ingest-odds":
+            from .odds_client import OddsApiClient
+            odds_client = OddsApiClient()
+            if args.start_date:
+                end_date = args.end_date or args.start_date
+                result = ingest_odds.ingest_historical_odds(odds_client, con, args.start_date, end_date)
+                print(
+                    f"Processed {result['days_processed']} day(s), "
+                    f"loaded {result['games_loaded']} game(s). "
+                    f"API requests remaining: {result['api_remaining']}"
+                )
+            else:
+                result = ingest_odds.ingest_live_odds(odds_client, con)
+                print(
+                    f"Loaded {result['games_loaded']} game(s). "
+                    f"API requests remaining: {result['api_remaining']}"
+                )
         elif args.command == "build-marts":
             paths = marts.export_parquet(con, settings.marts_dir)
             print(f"Exported {len(paths)} Parquet files to {settings.marts_dir}")
