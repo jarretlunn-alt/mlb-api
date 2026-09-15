@@ -79,7 +79,6 @@ class WeatherClient:
             payload = self._get(_FORECAST_URL, {
                 **base_params,
                 "hourly": "temperature_2m,windspeed_10m,winddirection_10m,precipitation_probability",
-                "forecast_days": 7,
             })
 
         return _extract_hour(payload, local_hour, use_archive)
