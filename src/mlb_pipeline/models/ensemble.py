@@ -87,6 +87,9 @@ def _feature_row(con, game_pk, home_id, away_id, as_of_date, ratings=None):
     ratings = _ratings(con, as_of_date) if ratings is None else ratings
     pois = _poisson_prediction(con, game_pk, home_id, away_id, as_of_date)
     # Explicit allowlist excludes score, win, total_runs, and identifier columns.
+    # sp_fip: use LEAGUE_AVG_FIP when pitcher stats are unavailable (opener game, etc.)
+    home_fip = raw.get("home_sp_fip_last_n")
+    away_fip = raw.get("away_sp_fip_last_n")
     values = [ratings.get(home_id, 1500.0), ratings.get(away_id, 1500.0),
               pois.features["lam_home"], pois.features["lam_away"],
               raw.get("home_runs_per_game"), raw.get("away_runs_allowed_per_game"),
@@ -155,7 +158,7 @@ def train(con, seasons: list[int]) -> CalibratedClassifierCV:
 
 def predict(model, con, game_pk: int, home_id: int, away_id: int,
             as_of_date: str) -> GamePrediction:
-    """Return calibrated home probability; missing inputs use Poisson fallback."""
+    """Return calibrated home probability; missing inputs use blended Poisson fallback."""
     row = _feature_row(con, game_pk, home_id, away_id, as_of_date)
     if row is None:
         base = _poisson_prediction(con, game_pk, home_id, away_id, as_of_date)
